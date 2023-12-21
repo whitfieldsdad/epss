@@ -1,0 +1,20 @@
+---
+version: "3.8"
+
+services:
+  timescaledb:
+    container_name: timescaledb
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      POSTGRES_USER: guest
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: epss_scores
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  timescaledb_data:
