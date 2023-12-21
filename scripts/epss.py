@@ -148,29 +148,51 @@ if __name__ == "__main__":
     def cli():
         pass
 
-
     @cli.command('download')
-    @click.argument('date')
-    @click.argument('min-date')
-    @click.argument('max-date')
+    @click.option('--date', required=False)
+    @click.option('--min-date', required=False)
+    @click.option('--max-date', required=False)
+    @click.option('--all', 'download_all', is_flag=True, help='Download all scores')
     @click.option('--cve-ids', multiple=True, help='CVE IDs to download')
-    @click.option('--output-dir', default=CWD, help='Output directory')
+    @click.option('--output-dir', '-o', default=CWD, help='Output directory')
     @click.option('--output-format', default=DEFAULT_OUTPUT_FORMAT, type=click.Choice(OUTPUT_FORMATS), help='Output format')
     @click.option('--overwrite', is_flag=True, help='Overwrite existing files')
     def download_scores_command(
         date: Optional[str], 
         min_date: Optional[str], 
         max_date: Optional[str], 
+        download_all: bool,
         cve_ids: Optional[Iterable[str]] = None, 
         output_dir: str = CWD, 
         output_format: Optional[str] = OUTPUT_FORMATS, 
         overwrite: bool = OVERWRITE):
 
-        if date and (min_date or max_date):
-            raise ValueError("Cannot specify date with min-date and/or max-date")
+        if download_all:
+            if min_date or max_date:
+                raise ValueError("Cannot specify --all with --min-date or --max-date")
+            elif date:
+                raise ValueError("Cannot specify --all with --date")
+
+            min_date = MIN_DATE
+            max_date = get_max_date()
         
-        if date:
-            min_date = max_date = date
+        elif date:
+            if min_date or max_date:
+                raise ValueError("Cannot specify --date with --min-date or --max-date")
+            elif download_all:
+                raise ValueError("Cannot specify --date with --all")
+            
+            min_date = date
+            max_date = date
+
+        elif min_date or max_date:
+            if date:
+                raise ValueError("Cannot specify --min-date or --max-date with --date")
+
+            if download_all:
+                raise ValueError("Cannot specify --min-date or --max-date with --all")
+        else:
+            min_date = max_date = get_max_date()
 
         download_scores_over_time(
             cve_ids=cve_ids, 
