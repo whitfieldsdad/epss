@@ -7,8 +7,10 @@ import datetime
 import requests
 import pandas as pd
 import logging
+import click
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
 MIN_DATE = "2022-07-15"
@@ -33,7 +35,13 @@ DEFAULT_OUTPUT_FORMAT = CSV_GZ
 OVERWRITE = False
 
 
-def download_scores_by_date(date: TIME, cve_ids: Optional[Iterable[str]] = None, output_dir: str = CWD, output_format: Optional[str] = OUTPUT_FORMATS, overwrite: bool = OVERWRITE):
+def download_scores_by_date(
+    date: TIME, 
+    cve_ids: Optional[Iterable[str]] = None, 
+    output_dir: str = CWD, 
+    output_format: Optional[str] = OUTPUT_FORMATS, 
+    overwrite: bool = OVERWRITE):
+
     url = get_download_url(date)
     path = get_output_path_by_date(date=date, output_dir=output_dir, output_format=output_format)
     if not overwrite and os.path.exists(path):
@@ -104,7 +112,7 @@ def get_output_format_from_path(path: str) -> str:
 def iter_dates_in_range(min_date: Optional[TIME] = None, max_date: Optional[TIME] = None) -> Iterator[datetime.date]:
     min_date = parse_date(min_date or MIN_DATE)
     max_date = parse_date(max_date or get_max_date())
-    delta = max_date - min_date   # returns timedelta
+    delta = max_date - min_date
     for i in range(delta.days + 1):
         day = min_date + datetime.timedelta(days=i)
         yield day
@@ -136,33 +144,41 @@ def parse_date(date: TIME) -> datetime.date:
 
 
 if __name__ == "__main__":
-    import argparse
+    @click.group()
+    def cli():
+        pass
 
-    def main(output_dir: str, output_format: str, cve_ids: Optional[Iterable[str]] = None, min_date: Optional[str] = None, max_date: Optional[str] = None, overwrite: Optional[bool] = OVERWRITE):
+
+    @cli.command('download')
+    @click.argument('date')
+    @click.argument('min-date')
+    @click.argument('max-date')
+    @click.option('--cve-ids', multiple=True, help='CVE IDs to download')
+    @click.option('--output-dir', default=CWD, help='Output directory')
+    @click.option('--output-format', default=DEFAULT_OUTPUT_FORMAT, type=click.Choice(OUTPUT_FORMATS), help='Output format')
+    @click.option('--overwrite', is_flag=True, help='Overwrite existing files')
+    def download_scores_command(
+        date: Optional[str], 
+        min_date: Optional[str], 
+        max_date: Optional[str], 
+        cve_ids: Optional[Iterable[str]] = None, 
+        output_dir: str = CWD, 
+        output_format: Optional[str] = OUTPUT_FORMATS, 
+        overwrite: bool = OVERWRITE):
+
+        if date and (min_date or max_date):
+            raise ValueError("Cannot specify date with min-date and/or max-date")
+        
+        if date:
+            min_date = max_date = date
+
         download_scores_over_time(
-            output_dir=output_dir, 
-            output_format=output_format,
-            overwrite=overwrite,
-            cve_ids=cve_ids,
+            cve_ids=cve_ids, 
             min_date=min_date, 
             max_date=max_date, 
+            output_dir=output_dir, 
+            output_format=output_format, 
+            overwrite=overwrite,
         )
-
-    class SplitArgs(argparse.Action):
-        def __call__(self, parser, namespace, values, option_string=None):
-            setattr(namespace, self.dest, values.split(','))
-
-    def cli():
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-
-        parser = argparse.ArgumentParser("Idempotently download EPSS scores")
-        parser.add_argument('--cve-ids', type=str, action=SplitArgs, help="CVE IDs to download scores for")
-        parser.add_argument('--output-dir', '-o', type=str, default=CWD, help="Directory to write scores to")
-        parser.add_argument('--output-format', '-f', type=str, default=DEFAULT_OUTPUT_FORMAT, choices=OUTPUT_FORMATS, help="Output format")
-        parser.add_argument('--min-date', type=str, default=MIN_DATE, help="Minimum date to download scores for")
-        parser.add_argument('--max-date', type=str, help='Maximum date to download scores for')
-        parser.add_argument('--overwrite', action='store_true', help='Overwrite existing files', default=OVERWRITE)
-        kwargs = vars(parser.parse_args()) 
-        main(**kwargs)
-
+    
     cli()
