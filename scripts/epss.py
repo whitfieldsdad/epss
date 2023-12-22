@@ -58,7 +58,7 @@ def download_scores_by_date(
     if cve_ids:
         df = df[df["cve_id"].isin(cve_ids)]
 
-    write_scores(df=df, path=path, output_format=output_format, overwrite=overwrite)
+    write_scores(df=df, path=path)
 
 
 def read_scores(path: str) -> pd.DataFrame:
@@ -90,23 +90,25 @@ def read_scores(path: str) -> pd.DataFrame:
     return df
 
 
-def write_scores(df: pd.DataFrame, path: str, output_format: Optional[str] = OUTPUT_FORMATS):
+def write_scores(df: pd.DataFrame, path: str):
+    fmt = get_file_format_from_path(path)
+
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     compression = None
-    if output_format in [CSV_GZ, JSON_GZ, JSONL_GZ, PARQUET_GZ]:
+    if fmt in [CSV_GZ, JSON_GZ, JSONL_GZ, PARQUET_GZ]:
         compression = 'gzip'
 
-    if output_format in [CSV, CSV_GZ]:
+    if fmt in [CSV, CSV_GZ]:
         df.to_csv(path, index=False, compression=compression)
-    elif output_format in [JSON, JSON_GZ]:
+    elif fmt in [JSON, JSON_GZ]:
         df.to_json(path, orient='records', compression=compression)
-    elif output_format in [JSONL, JSONL_GZ]:
+    elif fmt in [JSONL, JSONL_GZ]:
         df.to_json(path, orient='records', lines=True, compression=compression)
-    elif output_format in [PARQUET, PARQUET_GZ]:
+    elif fmt in [PARQUET, PARQUET_GZ]:
         df.to_parquet(path, index=False, compression=compression)
     else:
-        raise ValueError(f"Unsupported output format: {output_format}")
+        raise ValueError(f"Unsupported output format: {fmt}")
 
 
 def download_scores_over_time(cve_ids: Optional[Iterable[str]] = None, min_date: Optional[TIME] = None, max_date: Optional[TIME] = None, output_dir: str = CWD, output_format: Optional[str] = OUTPUT_FORMATS, overwrite: bool = OVERWRITE):
@@ -181,7 +183,6 @@ def parse_date(date: TIME) -> datetime.date:
 def reduce_scores(
     input_dir: str, 
     output_file: str,
-    output_format: str,
     min_date: Optional[TIME] = None,
     max_date: Optional[TIME] = None):
     
@@ -191,7 +192,7 @@ def reduce_scores(
         min_date=min_date,
         max_date=max_date,
     ))
-    input_files = tqdm.tqdm(input_files, desc="Reducing daily scores")
+    input_files = tqdm.tqdm(input_files, desc="Reducing scores")
     
     merged_df = None
     for path in input_files:
@@ -212,14 +213,40 @@ def reduce_scores(
     df['percentile'] = df['percentile'].round(2)
 
     # Calculate % change since last observation.
-    df['epss_pct_change'] = df.groupby('cve')['epss'].pct_change().round(2)
+    df['epss_pct_change'] = df.groupby('cve')['epss'].pct_change() * 100
 
     # Convert index to column
     df = df.reset_index()
+    df['date'] = df['date'].dt.date.astype(str)
 
     # Write to file
-    write_scores(df=df, path=output_file, output_format=output_format)
+    write_scores(df=df, path=output_file)
 
+
+def partition_scores(input_file: str, output_dir: str, output_format: Optional[str] = DEFAULT_OUTPUT_FORMAT, by: str = 'cve'):
+    df = read_scores(input_file)    
+    df = df.reset_index()
+    df['date'] = df['date'].dt.date.astype(str)
+ 
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = []
+
+        if by == 'cve':
+            for cve_id, cve_df in df.groupby('cve'):
+                path = os.path.join(output_dir, f'{cve_id}.{output_format}')
+                future = executor.submit(write_scores, cve_df, path)
+                futures.append(future)
+
+        elif by == 'date':
+            for date, date_df in df.groupby('date'):
+                path = os.path.join(output_dir, f'{date}.{output_format}')
+                future = executor.submit(write_scores, date_df, path)
+                futures.append(future)
+        else:
+            raise ValueError(f"Unsupported partitioning method: {by}")
+    
+        for future in tqdm.tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Partitioning scores"):
+            future.result()
 
 
 def filter_paths_by_timeframe(
@@ -317,13 +344,11 @@ if __name__ == "__main__":
     @cli.command('reduce')
     @click.option('--input-dir', '-i', required=True, help='Input directory')
     @click.option('--output-file', '-o', required=True, help='Output file')
-    @click.option('--output-format', default=DEFAULT_OUTPUT_FORMAT, type=click.Choice(OUTPUT_FORMATS), help='Output format')
     @click.option('--min-date')
     @click.option('--max-date')
     def reduce_scores_command(
         input_dir: str, 
         output_file: str,
-        output_format: str,
         min_date: str,
         max_date: str):
         """
@@ -332,11 +357,28 @@ if __name__ == "__main__":
         reduce_scores(
             input_dir=input_dir,
             output_file=output_file,
-            output_format=output_format,
             min_date=min_date,
             max_date=max_date,
         )
 
-
+    @cli.command('partition')
+    @click.option('--input-file', '-i', required=True, help='Input file')
+    @click.option('--output-dir', '-o', required=True, help='Output directory')
+    @click.option('--output-format', default=DEFAULT_OUTPUT_FORMAT, type=click.Choice(OUTPUT_FORMATS), help='Output format')
+    @click.option('--by', type=click.Choice(['cve', 'date']), default='cve')
+    def partition_scores_command(
+        input_file: str, 
+        output_dir: str,
+        output_format: str,
+        by: str):
+        """
+        Partition scores in a file by CVE ID or date.
+        """
+        partition_scores(
+            input_file=input_file,
+            output_dir=output_dir,
+            output_format=output_format,
+            by=by,
+        )
 
     cli()
