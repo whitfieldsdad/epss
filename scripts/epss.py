@@ -2,6 +2,8 @@ import concurrent.futures
 import io
 import os
 import re
+import sys
+import tqdm
 from typing import Iterable, Iterator, Optional, Union
 import datetime
 import requests
@@ -11,7 +13,6 @@ import click
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-
 
 MIN_DATE = "2022-07-15"
 
@@ -47,16 +48,50 @@ def download_scores_by_date(
     if not overwrite and os.path.exists(path):
         logger.debug(f"Skipping {path} because it already exists")
         return
-    
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    
+        
     response = requests.get(url, stream=True)
     response.raise_for_status()
 
     df = pd.read_csv(io.BytesIO(response.content), skiprows=1, compression="gzip")
+    df['date'] = date.isoformat()
 
     if cve_ids:
         df = df[df["cve_id"].isin(cve_ids)]
+
+    write_scores(df=df, path=path, output_format=output_format, overwrite=overwrite)
+
+
+def read_scores(path: str) -> pd.DataFrame:
+    fmt = get_file_format_from_path(path)
+
+    compression = None
+    if fmt in [CSV_GZ, JSON_GZ, JSONL_GZ]:
+        compression = 'gzip'
+
+    if fmt in [CSV, CSV_GZ]:
+        df = pd.read_csv(path, compression=compression)
+    elif fmt in [JSON, JSON_GZ]:
+        df = pd.read_json(path, compression=compression)
+    elif fmt in [JSONL, JSONL_GZ]:
+        df = pd.read_json(path, lines=True, compression=compression)
+    elif fmt in [PARQUET, PARQUET_GZ]:
+        df = pd.read_parquet(path)
+    else:
+        raise ValueError(f"Unsupported file format: {fmt}")
+    
+    # Add date column if it doesn't exist
+    if 'date' not in df.columns:
+        date = get_date_from_path(path)
+        df['date'] = date.isoformat()
+    
+    # Use 'date' as date index
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.set_index('date')
+    return df
+
+
+def write_scores(df: pd.DataFrame, path: str, output_format: Optional[str] = OUTPUT_FORMATS):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
 
     compression = None
     if output_format in [CSV_GZ, JSON_GZ, JSONL_GZ, PARQUET_GZ]:
@@ -101,7 +136,7 @@ def get_download_url(date: Optional[TIME] = None) -> str:
     return f"https://epss.cyentia.com/epss_scores-{date.isoformat()}.csv.gz"
 
 
-def get_output_format_from_path(path: str) -> str:
+def get_file_format_from_path(path: str) -> str:
     for output_format in sorted(OUTPUT_FORMATS, key=len, reverse=True):
         ext = f'.{output_format}'
         if path.endswith(ext):
@@ -143,6 +178,79 @@ def parse_date(date: TIME) -> datetime.date:
         raise ValueError(f"Unsupported data format: {date}")
 
 
+def reduce_scores(
+    input_dir: str, 
+    output_file: str,
+    output_format: str,
+    min_date: Optional[TIME] = None,
+    max_date: Optional[TIME] = None):
+    
+    input_files = [os.path.join(input_dir, filename) for filename in os.listdir(input_dir)]
+    input_files = sorted(filter_paths_by_timeframe(
+        paths=input_files, 
+        min_date=min_date,
+        max_date=max_date,
+    ))
+    input_files = tqdm.tqdm(input_files, desc="Reducing daily scores")
+    
+    merged_df = None
+    for path in input_files:
+        df = read_scores(path)
+        df.drop(columns=['percentile'], inplace=True)
+        if merged_df is None:
+            merged_df = df
+            continue
+        else:
+            merged_df = pd.concat([merged_df, df])
+            merged_df = merged_df.drop_duplicates(subset=['cve', 'epss'])
+    
+    df = merged_df.copy()
+    del merged_df
+
+    # Recalculate daily percentiles to 5 decimal places
+    df['percentile'] = df.groupby('date')['epss'].rank(pct=True)
+    df['percentile'] = df['percentile'].round(5)
+
+    # Convert index to column
+    df = df.reset_index()
+
+    # Write to file
+    write_scores(df=df, path=output_file, output_format=output_format)
+
+
+
+def filter_paths_by_timeframe(
+        paths: Iterable[str], 
+        min_date: Optional[TIME] = None, 
+        max_date: Optional[TIME] = None) -> Iterator[str]:
+    
+    min_date = parse_date(min_date) if min_date else None
+    max_date = parse_date(max_date) if max_date else None
+
+    for path in paths:
+        date = get_date_from_path(path)
+
+        if min_date and date < min_date:
+            continue
+
+        if max_date and date > max_date:
+            continue
+
+        yield path
+
+
+def get_date_from_path(path: str) -> datetime.date:
+    filename = os.path.basename(path)
+    return get_date_from_filename(filename)
+
+
+def get_date_from_filename(filename: str) -> datetime.date:
+    regex = r"(\d{4}-\d{2}-\d{2})"
+    match = re.search(regex, filename)
+    assert match is not None, f"No date found in {filename}"
+    return datetime.date.fromisoformat(match.group(1))
+
+
 if __name__ == "__main__":
     @click.group()
     def cli():
@@ -154,7 +262,7 @@ if __name__ == "__main__":
     @click.option('--max-date', required=False)
     @click.option('--all', 'download_all', is_flag=True, help='Download all scores')
     @click.option('--cve-ids', multiple=True, help='CVE IDs to download')
-    @click.option('--output-dir', '-o', default=CWD, help='Output directory')
+    @click.option('--output-dir', '-o', required=True, help='Output directory')
     @click.option('--output-format', default=DEFAULT_OUTPUT_FORMAT, type=click.Choice(OUTPUT_FORMATS), help='Output format')
     @click.option('--overwrite', is_flag=True, help='Overwrite existing files')
     def download_scores_command(
@@ -202,5 +310,30 @@ if __name__ == "__main__":
             output_format=output_format, 
             overwrite=overwrite,
         )
-    
+
+    @cli.command('reduce')
+    @click.option('--input-dir', '-i', required=True, help='Input directory')
+    @click.option('--output-file', '-o', required=True, help='Output file')
+    @click.option('--output-format', default=DEFAULT_OUTPUT_FORMAT, type=click.Choice(OUTPUT_FORMATS), help='Output format')
+    @click.option('--min-date')
+    @click.option('--max-date')
+    def reduce_scores_command(
+        input_dir: str, 
+        output_file: str,
+        output_format: str,
+        min_date: str,
+        max_date: str):
+        """
+        Merge and deduplicate scores
+        """
+        reduce_scores(
+            input_dir=input_dir,
+            output_file=output_file,
+            output_format=output_format,
+            min_date=min_date,
+            max_date=max_date,
+        )
+
+
+
     cli()
