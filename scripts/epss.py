@@ -207,9 +207,12 @@ def reduce_scores(
     df = merged_df.copy()
     del merged_df
 
-    # Recalculate daily percentiles to 5 decimal places
+    # Recalculate daily percentiles.
     df['percentile'] = df.groupby('date')['epss'].rank(pct=True)
-    df['percentile'] = df['percentile'].round(5)
+    df['percentile'] = df['percentile'].round(2)
+
+    # Calculate % change since last observation.
+    df['epss_pct_change'] = df.groupby('cve')['epss'].pct_change().round(2)
 
     # Convert index to column
     df = df.reset_index()
