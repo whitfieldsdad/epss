@@ -58,16 +58,31 @@ def download_scores_by_date(
     if cve_ids:
         df = df[df["cve_id"].isin(cve_ids)]
 
-    write_scores(df=df, path=path)
+    write_dataframe(df=df, path=path)
 
 
 def read_scores(path: str) -> pd.DataFrame:
-    fmt = get_file_format_from_path(path)
+    df = read_dataframe(path)
 
+    # Add date column if it doesn't exist
+    if 'date' not in df.columns:
+        date = get_date_from_path(path)
+        df['date'] = date.isoformat()
+
+    # Convert 'date' to datetime
+    df['date'] = pd.to_datetime(df['date'])
+    return df
+
+
+
+def read_dataframe(path: str) -> pd.DataFrame:
+    logger.debug('Reading: %s', path)
+    fmt = get_file_format_from_path(path)
     compression = None
     if fmt in [CSV_GZ, JSON_GZ, JSONL_GZ]:
         compression = 'gzip'
 
+    logger.debug(f"Reading scores from {path} (format: {fmt}, compression: {compression})")
     if fmt in [CSV, CSV_GZ]:
         df = pd.read_csv(path, compression=compression)
     elif fmt in [JSON, JSON_GZ]:
@@ -79,34 +94,28 @@ def read_scores(path: str) -> pd.DataFrame:
     else:
         raise ValueError(f"Unsupported file format: {fmt}")
     
-    # Add date column if it doesn't exist
-    if 'date' not in df.columns:
-        date = get_date_from_path(path)
-        df['date'] = date.isoformat()
-    
-    # Use 'date' as date index
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.set_index('date')
+    logger.debug('Read %d x %d dataframe from %s (columns: %s)', len(df), len(df.columns), path, tuple(df.columns))
     return df
 
 
-def write_scores(df: pd.DataFrame, path: str):
+def write_dataframe(df: pd.DataFrame, path: str):    
     fmt = get_file_format_from_path(path)
-
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     compression = None
     if fmt in [CSV_GZ, JSON_GZ, JSONL_GZ, PARQUET_GZ]:
         compression = 'gzip'
 
+    logger.debug('Writing %d x %d dataframe to %s (columns: %s)', len(df), len(df.columns), path, tuple(df.columns))
+
     if fmt in [CSV, CSV_GZ]:
-        df.to_csv(path, index=False, compression=compression)
+        df.to_csv(path, compression=compression, index=False)
     elif fmt in [JSON, JSON_GZ]:
-        df.to_json(path, orient='records', compression=compression)
+        df.to_json(path, orient='records', compression=compression, index=False)
     elif fmt in [JSONL, JSONL_GZ]:
-        df.to_json(path, orient='records', lines=True, compression=compression)
+        df.to_json(path, orient='records', lines=True, compression=compression, index=False)
     elif fmt in [PARQUET, PARQUET_GZ]:
-        df.to_parquet(path, index=False, compression=compression)
+        df.to_parquet(path, compression=compression, index=False)
     else:
         raise ValueError(f"Unsupported output format: {fmt}")
 
@@ -196,37 +205,25 @@ def reduce_scores(
     
     merged_df = None
     for path in input_files:
-        df = read_scores(path)
-        df.drop(columns=['percentile'], inplace=True)
+        df = read_dataframe(path)
+
         if merged_df is None:
             merged_df = df
             continue
         else:
             merged_df = pd.concat([merged_df, df])
-            merged_df = merged_df.drop_duplicates(subset=['cve', 'epss'])
-    
+            merged_df = merged_df.drop_duplicates(subset=['cve', 'epss'], ignore_index=True)
+
     df = merged_df.copy()
     del merged_df
 
-    # Recalculate daily percentiles.
-    df['percentile'] = df.groupby('date')['epss'].rank(pct=True)
-    df['percentile'] = df['percentile'].round(2)
-
-    # Calculate % change since last observation.
-    df['epss_pct_change'] = df.groupby('cve')['epss'].pct_change() * 100
-
-    # Convert index to column
-    df = df.reset_index()
-    df['date'] = df['date'].dt.date.astype(str)
-
     # Write to file
-    write_scores(df=df, path=output_file)
+    write_dataframe(df=df, path=output_file)
 
 
+# TODO
 def partition_scores(input_file: str, output_dir: str, output_format: Optional[str] = DEFAULT_OUTPUT_FORMAT, by: str = 'cve'):
-    df = read_scores(input_file)    
-    df = df.reset_index()
-    df['date'] = df['date'].dt.date.astype(str)
+    df = read_scores(input_file)
  
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = []
@@ -234,13 +231,13 @@ def partition_scores(input_file: str, output_dir: str, output_format: Optional[s
         if by == 'cve':
             for cve_id, cve_df in df.groupby('cve'):
                 path = os.path.join(output_dir, f'{cve_id}.{output_format}')
-                future = executor.submit(write_scores, cve_df, path)
+                future = executor.submit(write_dataframe, cve_df, path)
                 futures.append(future)
 
         elif by == 'date':
             for date, date_df in df.groupby('date'):
-                path = os.path.join(output_dir, f'{date}.{output_format}')
-                future = executor.submit(write_scores, date_df, path)
+                path = os.path.join(output_dir, f'{date.date().isoformat()}.{output_format}')
+                future = executor.submit(write_dataframe, date_df, path)
                 futures.append(future)
         else:
             raise ValueError(f"Unsupported partitioning method: {by}")
@@ -283,8 +280,10 @@ def get_date_from_filename(filename: str) -> datetime.date:
 
 if __name__ == "__main__":
     @click.group()
-    def cli():
-        pass
+    @click.option('--debug', is_flag=True, help='Enable debug logging')
+    def cli(debug: bool):
+        if debug:
+            logger.setLevel(logging.DEBUG)
 
     @cli.command('download')
     @click.option('--date', required=False)
