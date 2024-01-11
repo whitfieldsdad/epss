@@ -1,10 +1,13 @@
 default: clean install
 
 clean:
-	mvn clean
+	rm -rf data
 
-install:
-	mvn install
+update:
+	poetry update
+
+requirements:
+	poetry export -f requirements.txt --output requirements.txt --without-hashes
 
 up: container
 	docker-compose up --force-recreate
@@ -21,21 +24,3 @@ destroy:
 nuke: destroy
 
 restart: down up
-
-data: data/raw data/reduced data/partitioned/by/date data/partitioned/by/cve
-
-data/raw:
-	python3 scripts/epss.py --debug download --all --output-dir=data/raw --output-format=parquet
-
-data/reduced:
-	python3 scripts/epss.py --debug reduce --input-dir=data/raw --output-file=data/reduced.parquet
-
-data/partitioned: data/partitioned/by/date data/partitioned/by/cve
-
-data/partitioned/by/date:
-	python3 scripts/epss.py --debug partition --input-file=data/reduced.parquet --output-dir=data/partitioned/by/date --by=date --output-format=parquet
-
-data/partitioned/by/cve:
-	python3 scripts/epss.py --debug partition --input-file=data/reduced.parquet --output-dir=data/partitioned/by/cve --by=cve --output-format=parquet
-
-.PHONY: data data/raw data/reduced data/partitioned/by/date data/partitioned/by/cve
