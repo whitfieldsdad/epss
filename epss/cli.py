@@ -102,21 +102,25 @@ def diff_command(a: str, b: str, output_file: Optional[str], output_format: Opti
             print(json.dumps(row.to_dict(), cls=JSONEncoder))
 
 
+# TODO: dynamically reconstruct snapshots when performing rolling diffs or use a static snapshot
 @main.command('rolling-diff')
 @click.option('--input-dir', '-i', required=True, help='Input directory')
-@click.option('--output-dir', '-o', required=False, help='Output directory')
+@click.option('--output-file', '-o', required=False, help='Output file/directory')
 @click.option('--output-format', '-f', default=DEFAULT_FILE_FORMAT, type=click.Choice(FILE_FORMATS), help='Output file format')
-def rolling_diff_command(input_dir: str, output_dir: str, output_format: Optional[str]):
+@click.option('--partition-by', '-p', type=click.Choice(['date', 'cve']), help='Partitioning scheme')
+def rolling_diff_command(input_dir: str, output_file: str, output_format: Optional[str], partition_by: str):
     """
-    Diff two sets of EPSS scores.
+    Diff sets of EPSS scores.
     """
     paths = util.iter_paths(input_dir)
-    for (_, b, diff) in epss.rolling_diff_from_files(paths):
-        if output_dir:
-            path = os.path.join(output_dir, f'{b.isoformat()}.{output_format}')
-            util.write_dataframe(diff, path=path)
+    for (_, b, df) in epss.rolling_diff_from_files(paths):        
+        df['date'] = df['date'].astype(str)
+
+        if output_file:
+            path = os.path.join(output_file, f'{b.isoformat()}.{output_format}')
+            util.write_dataframe(df, path=path)
         else:
-            print(len(diff))
+            raise NotImplementedError()
 
 
 @main.command('merge')
@@ -131,6 +135,41 @@ def merge_dataframes_command(input_dir: str, output_file: str, file_format: str)
     dfs = map(util.read_dataframe, paths)
     df = util.merge_dataframes(dfs)
     util.write_dataframe(df=df, path=output_file, file_format=file_format)
+
+
+@main.command('convert')
+@click.option('--input-file', '-i', required=True, help='Input file')
+@click.option('--output-file', '-o', required=True, help='Output file')
+def convert_dataframe_command(input_file: str, output_file: str):
+    """
+    Convert matrix files between formats.
+    """
+    df = util.read_dataframe(input_file)
+    util.write_dataframe(df=df, path=output_file)
+
+
+@main.command('date-range')
+@click.option('--input-file', '-i')
+def date_range_command(input_file: str):
+    """
+    Print the date range of a file.
+    """
+    df = util.read_dataframe(input_file)
+    min_date = df['date'].min()
+    max_date = df['date'].max()
+    print(f"{min_date} - {max_date}")
+
+
+@main.command('dates')
+@click.option('--input-file', '-i')
+def dates_command(input_file: str):
+    """
+    Print the dates found in a file.
+    """
+    df = util.read_dataframe(input_file)
+    dates = df['date'].unique()
+    for date in sorted(dates):
+        print(date)
 
 
 if __name__ == '__main__':

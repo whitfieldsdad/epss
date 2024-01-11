@@ -2,6 +2,7 @@ import concurrent.futures
 import io
 import os
 import re
+import sys
 import tqdm
 from typing import Iterable, Iterator, Optional, Tuple
 import datetime
@@ -135,15 +136,9 @@ def get_max_date() -> datetime.date:
     return datetime.date.fromisoformat(match.group(1))
 
 
-def rolling_diff_from_files(paths: Iterable[str], drop_na: bool = False) -> Iterator[Tuple[datetime.date, datetime.date, pd.DataFrame]]:
+def rolling_diff_from_files(paths: Iterable[str]) -> Iterator[Tuple[datetime.date, datetime.date, pd.DataFrame]]:
     paths = util.sort_file_paths_by_date(paths)
-
-    a = read_scores(paths[0])
-    for b in paths[1:]:
-        b = read_scores(b)
-        d = diff(a, b, drop_na=drop_na)
-        yield a['date'].max(), b['date'].max(), d
-        a = b
+    yield from rolling_diff(map(read_scores, paths))
 
 
 def rolling_diff(dfs: Iterable[pd.DataFrame]) -> Iterator[Tuple[datetime.date, datetime.date, pd.DataFrame]]:
@@ -151,8 +146,8 @@ def rolling_diff(dfs: Iterable[pd.DataFrame]) -> Iterator[Tuple[datetime.date, d
         assert len(a['date'].unique()) == 1, f"Expected dataframe to contain a single date, not {a['date'].unique()}"
         assert len(b['date'].unique()) == 1, f"Expected dataframe to contain a single date, not {b['date'].unique()}"
 
-        date_a = a['date'].max()
-        date_b = b['date'].max()
+        date_a = a['date'].max().to_pydatetime().date()
+        date_b = b['date'].max().to_pydatetime().date()
 
         d = diff(a, b)
         yield date_a, date_b, d

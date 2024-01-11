@@ -1,7 +1,7 @@
 import itertools
 from typing import Iterable, List, Optional, Iterator
 import datetime
-from epss.constants import TIME, CSV, CSV_GZ, JSON, JSONL, JSON_GZ, JSONL_GZ, PARQUET, PARQUET_GZ, FILE_FORMATS
+from epss.constants import TIME, CSV, CSV_GZ, JSON, JSONL, JSON_GZ, JSONL_GZ, PARQUET, FILE_FORMATS
 
 import pandas as pd
 import logging
@@ -25,7 +25,7 @@ def read_dataframe(path: str, file_format: Optional[str] = None) -> pd.DataFrame
         df = pd.read_json(path, compression=compression)
     elif file_format in [JSONL, JSONL_GZ]:
         df = pd.read_json(path, lines=True, compression=compression)
-    elif file_format in [PARQUET, PARQUET_GZ]:
+    elif file_format in [PARQUET]:
         df = pd.read_parquet(path)
     else:
         raise ValueError(f"Unsupported file format: {file_format}")
@@ -38,7 +38,7 @@ def write_dataframe(df: pd.DataFrame, path: str, file_format: Optional[str] = No
         file_format = get_file_format_from_path(path)
 
     compression = None
-    if file_format in [CSV_GZ, JSON_GZ, JSONL_GZ, PARQUET_GZ]:
+    if file_format in [CSV_GZ, JSON_GZ, JSONL_GZ]:
         compression = 'gzip'
 
     logger.debug('Writing %d x %d dataframe to %s (columns: %s)', len(df), len(df.columns), path, tuple(df.columns))
@@ -49,7 +49,7 @@ def write_dataframe(df: pd.DataFrame, path: str, file_format: Optional[str] = No
         df.to_json(path, orient='records', compression=compression, index=False)
     elif file_format in [JSONL, JSONL_GZ]:
         df.to_json(path, orient='records', lines=True, compression=compression, index=False)
-    elif file_format in [PARQUET, PARQUET_GZ]:
+    elif file_format in [PARQUET]:
         df.to_parquet(path, compression=compression, index=False)
     else:
         raise ValueError(f"Unsupported output format: {file_format}")
