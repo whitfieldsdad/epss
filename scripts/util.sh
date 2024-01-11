@@ -6,22 +6,21 @@ download_file() {
     local path=$2
 
     echo "Downloading ${url} to ${path}"
-
     wget "${url}" -O "${path}" --quiet
 }
 
 # Function to download a list of files to a directory.
 download_files() {
-    local urls=$1
-    local directory=$2
-
-    # Count files
-    local total=$(echo ${urls[@]} | wc -w | tr -d ' ')
+    local urls=(${@:1:$(($#-1))})
+    local directory=${@: -1}
 
     # Strip trailing slash from directory path
     directory=${directory%/}
 
-    # Check if aria2c is installed
+    # Announce our intention to the world
+    local total=$(echo ${urls[@]} | wc -w | tr -d ' ')
+    
+    # Download files with aria2c if its installed
     if aria2c_installed; then
         echo "aria2c is installed - downloading files in parallel using aria2c"
         
@@ -145,4 +144,12 @@ convert_jsonl_to_json() {
     local json_file=$2
 
     cat ${jsonl_file} | python3 -c 'import json, sys; print(json.dumps([json.loads(line) for line in sys.stdin]))' > ${json_file}
+}
+
+# Function to get date from filename.
+get_date_from_filename() {
+    local path=$1
+    local filename=$(basename ${path})
+    local date=$(echo ${filename} | grep -oE '(\d{4}-\d{2}-\d{2})')
+    echo ${date}
 }
