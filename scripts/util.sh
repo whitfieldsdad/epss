@@ -23,27 +23,24 @@ download_files() {
 
     # Check if aria2c is installed
     if aria2c_installed; then
-        echo "aria2c installed - downloading ${total} files in parallel"
+        echo "aria2c is installed - downloading files in parallel using aria2c"
         
         # Write list of URLs to a temporary file with one line per URL
         local url_file=.urls.txt
         echo ${urls[@]} | tr ' ' '\n' > ${url_file}
 
         # Download files
-        aria2c -i ${url_file} --dir=${directory} --continue=true --auto-file-renaming=false
+        aria2c -i ${url_file} --dir=${directory} --continue=true --auto-file-renaming=false --quiet
 
         # Remove temporary file
         rm ${url_file}
     else
-        echo "aria2c not installed - downloading ${total} files one-by-one"
+        echo "aria2c is not installed - downloading files sequentially using wget"
         for url in ${urls[@]}; do
             local path=${directory}/$(basename ${url})
             download_file "${url}" "${path}"
         done
     fi
-    
-
-    
 }
 
 aria2c_installed() {
