@@ -82,6 +82,9 @@ get_download_urls() {
 
 get_download_url() {
     local date=$1
+    if [[ -z ${date} ]]; then
+        date=$(get_max_date)
+    fi
     local url=https://epss.cyentia.com/epss_scores-${date}.csv.gz
     echo ${url}
 }

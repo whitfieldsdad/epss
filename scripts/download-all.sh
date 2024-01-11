@@ -2,7 +2,13 @@
 
 source util.sh
 
-output_dir=${1:-data}
+output_dir=$1
+if [[ -z ${output_dir} ]]; then
+    echo "Usage: $0 <output_dir>"
+    exit 1
+fi
+output_dir=${output_dir%/}
+mkdir -p ${output_dir}
 
 min_date=$(get_min_date)
 max_date=$(get_max_date)
@@ -31,5 +37,4 @@ if [[ ${#pending_urls[@]} -eq 0 ]]; then
     exit 0
 fi
 
-mkdir -vp ${output_dir}
 download_files "${pending_urls[@]}" "${output_dir}"

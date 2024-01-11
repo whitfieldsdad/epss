@@ -2,12 +2,20 @@
 
 source util.sh
 
-URL=https://epss.cyentia.com/epss_scores-current.csv.gz
+output_dir=$1
+if [[ -z ${output_dir} ]]; then
+    echo "Usage: $0 <output_dir>"
+    exit 1
+fi
+output_dir=${output_dir%/}
+mkdir -p ${output_dir}
 
-gz_csv_file=${1:-$(basename ${URL})}
-csv_file="${gz_csv_file%.*}"
+url=$(get_download_url)
+path=${output_dir}/$(basename ${url})
 
-download_latest_epss_scores "${URL}" "${gz_csv_file}"
-decompress_file "${gz_csv_file}"
-strip_csv_file_comment_header "${csv_file}"
-sort_csv_file "${csv_file}" "epss"
+if [[ -f ${path} ]]; then
+    echo "File ${path} already exists"
+    exit 0
+fi
+
+download_file "${url}" "${path}"

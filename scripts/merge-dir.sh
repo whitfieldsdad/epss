@@ -23,6 +23,8 @@ echo "Merging ${total} files into ${output_file}"
 
 # Write to an uncompressed file.
 target_output_file=${output_file%.gz}
+rm -f ${target_output_file}
+
 for input_file in ${input_dir}/*.csv.gz; do
     gunzip -c ${input_file} --keep >> ${target_output_file}
 done
