@@ -98,48 +98,60 @@ def iter_dates_in_range(min_date: TIME, max_date: TIME) -> Iterator[datetime.dat
         yield day
 
 
-def parse_date(d: TIME) -> datetime.date:
-    if isinstance(d, datetime.date):
-        return d
-    elif isinstance(d, datetime.datetime):
-        return d.date()
-    elif isinstance(d, str):
-        return datetime.datetime.strptime(d, "%Y-%m-%d").date()
-    elif isinstance(d, (int, float)):
-        return datetime.datetime.fromtimestamp(d).date()
-    else:
-        raise ValueError(f"Unsupported data format: {d}")
+def parse_date(d: Optional[TIME]) -> Optional[datetime.date]:
+    if d is not None:
+        if isinstance(d, datetime.date):
+            return d
+        elif isinstance(d, datetime.datetime):
+            return d.date()
+        elif isinstance(d, str):
+            return datetime.datetime.strptime(d, "%Y-%m-%d").date()
+        elif isinstance(d, (int, float)):
+            return datetime.datetime.fromtimestamp(d).date()
+        else:
+            raise ValueError(f"Unsupported data format: {d}")
 
 
-def parse_datetime(t: TIME) -> datetime.datetime:
-    if isinstance(t, datetime.datetime):
-        return t
-    elif isinstance(t, datetime.date):
-        return datetime.datetime.combine(t, datetime.time())
-    elif isinstance(t, str):
-        return datetime.datetime.fromisoformat(t)
-    elif isinstance(t, (int, float)):
-        return datetime.datetime.fromtimestamp(t)
-    else:
-        raise ValueError(f"Unsupported data format: {t}")
+def parse_datetime(t: Optional[TIME]) -> datetime.datetime:
+    if t is not None:
+        if isinstance(t, datetime.datetime):
+            return t
+        elif isinstance(t, datetime.date):
+            return datetime.datetime.combine(t, datetime.time())
+        elif isinstance(t, str):
+            return datetime.datetime.fromisoformat(t)
+        elif isinstance(t, (int, float)):
+            return datetime.datetime.fromtimestamp(t)
+        else:
+            raise ValueError(f"Unsupported data format: {t}")
 
 
-def iter_paths(path: str, recursive: bool = False, min_date: Optional[TIME] = None, max_date: Optional[TIME] = None) -> Iterator[str]:
-    paths = _iter_paths(path, recursive=recursive)
+def iter_paths(
+        root: str, 
+        recursive: bool = False, 
+        min_date: Optional[TIME] = None, 
+        max_date: Optional[TIME] = None,
+        include_dirs: Optional[bool] = True) -> Iterator[str]:
+
+    paths = _iter_paths(root, recursive=recursive)
+    if not include_dirs:
+        paths = filter(lambda p: os.path.isdir(p) is False, paths)
+
     if min_date or max_date:
         paths = filter_paths_by_timeframe(paths, min_date=min_date, max_date=max_date)
     yield from paths
 
 
-def _iter_paths(path: str, recursive: bool = False) -> Iterator[str]:
-    path = realpath(path)
+def _iter_paths(root: str, recursive: bool = False):
+    root = realpath(root)
     if not recursive:
-        for filename in os.listdir(path):
-            yield os.path.join(path, filename)
+        for filename in os.listdir(root):
+            yield os.path.join(root, filename)
     else:
-        for root, _, files in os.walk(path):
+        for directory, _, files in os.walk(root):
             for filename in files:
-                yield os.path.join(root, filename)
+                yield os.path.join(directory, filename)
+    
 
 
 def filter_paths_by_timeframe(
@@ -157,7 +169,7 @@ def filter_paths_by_timeframe(
         yield path
 
 
-def sort_file_paths_by_date(paths: Iterable[str]) -> List[str]:
+def sort_paths_by_date(paths: Iterable[str]) -> List[str]:
     return sorted(paths, key=lambda p: get_date_from_filename(p))
 
 
