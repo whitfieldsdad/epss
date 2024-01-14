@@ -374,8 +374,29 @@ class Client:
             cve_id: str,
             min_date: Optional[TIME] = None,
             max_date: Optional[TIME] = None) -> Tuple[float, float]:
-        raise NotImplementedError()
+        
+        query = get_query(cve_ids=[cve_id])
+        df = self.get_score_range_dataframe(query=query, min_date=min_date, max_date=max_date)
+        if len(df) == 0:
+            raise ValueError(f"No EPSS scores found for {cve_id}")
+        
+        o = df.row(0, named=True)
+        return (o['min_epss'], o['max_epss'])
     
+    def get_percentile_range_tuple_by_cve_id(
+            self,
+            cve_id: str,
+            min_date: Optional[TIME] = None,
+            max_date: Optional[TIME] = None) -> Tuple[float, float]:
+        
+        query = get_query(cve_ids=[cve_id])
+        df = self.get_score_range_dataframe(query=query, min_date=min_date, max_date=max_date)
+        if len(df) == 0:
+            raise ValueError(f"No EPSS scores found for {cve_id}")
+        
+        o = df.row(0, named=True)
+        return (o['min_percentile'], o['max_percentile'])
+
 
 def read_dataframe(path: str) -> pl.DataFrame:
     df = util.read_polars_dataframe(path)
