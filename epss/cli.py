@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 import click
 import logging
 from typing import Iterable, Optional
@@ -90,8 +89,8 @@ def diff_command(a: str, b: str, output_file: Optional[str], output_format: Opti
     """
     Diff two sets of EPSS scores.
     """
-    a = epss.read_scores(a)
-    b = epss.read_scores(b)
+    a = epss.read_scores_dataframe(a)
+    b = epss.read_scores_dataframe(b)
     df = epss.diff(a, b)
 
     if output_file:

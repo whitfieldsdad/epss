@@ -34,6 +34,7 @@ def read_dataframe(path: str, file_format: Optional[str] = None) -> pd.DataFrame
 
 
 def write_dataframe(df: pd.DataFrame, path: str, file_format: Optional[str] = None):
+    path = realpath(path)
     if not file_format:
         file_format = get_file_format_from_path(path)
 
@@ -75,16 +76,16 @@ def get_file_format_from_path(path: str) -> str:
     raise ValueError(f"Could not determine output format from path: {path}")
 
 
-def get_date_from_filename(filename: str) -> datetime.date:
+def get_date_from_filename(filename: str) -> Optional[datetime.date]:
     filename = os.path.basename(filename)
     regex = r"(\d{4}-\d{2}-\d{2})"
     match = re.search(regex, filename)
-    assert match is not None, f"No date found in {filename}"
-    return datetime.date.fromisoformat(match.group(1))
+    if match is not None:
+        return datetime.date.fromisoformat(match.group(1))
 
 
 def realpath(path: str) -> str:
-    for f in [os.path.expanduser, os.path.expandvars, os.path.realpath]:
+    for f in [os.path.expandvars, os.path.expanduser, os.path.realpath]:
         path = f(path)
     return path
 
@@ -100,10 +101,10 @@ def iter_dates_in_range(min_date: TIME, max_date: TIME) -> Iterator[datetime.dat
 
 def parse_date(d: Optional[TIME]) -> Optional[datetime.date]:
     if d is not None:
-        if isinstance(d, datetime.date):
-            return d
-        elif isinstance(d, datetime.datetime):
+        if isinstance(d, datetime.datetime):
             return d.date()
+        elif isinstance(d, datetime.date):
+            return d
         elif isinstance(d, str):
             return datetime.datetime.strptime(d, "%Y-%m-%d").date()
         elif isinstance(d, (int, float)):
@@ -151,7 +152,6 @@ def _iter_paths(root: str, recursive: bool = False):
         for directory, _, files in os.walk(root):
             for filename in files:
                 yield os.path.join(directory, filename)
-    
 
 
 def filter_paths_by_timeframe(
@@ -159,6 +159,9 @@ def filter_paths_by_timeframe(
         min_date: Optional[TIME] = None, 
         max_date: Optional[TIME] = None) -> Iterator[str]:
     
+    min_date = parse_date(min_date)
+    max_date = parse_date(max_date)
+
     for path in paths:
         if min_date or max_date:
             date = get_date_from_filename(path)
