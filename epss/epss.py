@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import shutil
 import sys
 from epss import util
-from epss.constants import CACHE_DIR, DATE_AND_CVE, DEFAULT_FILE_FORMAT, FILE_FORMATS, MIN_DATE, OVERWRITE, PARQUET, STRS, TIME
+from epss.constants import CACHE_DIR, DEFAULT_SORTING_KEY, DEFAULT_FILE_FORMAT, FILE_FORMATS, MIN_DATE, PARQUET, STRS, TIME
 from typing import Any, Dict, List, Optional, Iterable, Iterator, Set, Tuple
 import concurrent.futures
 import datetime
@@ -274,7 +274,7 @@ class Client:
         )
         df = pl.concat(dfs)
         if preserve_order:
-            df = df.sort(by=DATE_AND_CVE)
+            df = df.sort(by=DEFAULT_SORTING_KEY)
         return df
 
     def iter_score_changelog_dataframes(
@@ -366,6 +366,8 @@ class Client:
             epss_change_pct=(pl.col('epss_change') / pl.col('min_epss')) * 100,
             percentile_change_pct=(pl.col('percentile_change') / pl.col('min_percentile')) * 100,
         )
+        if preserve_order:
+            df = df.sort(by=DEFAULT_SORTING_KEY)
         return df
     
     # TODO
@@ -629,7 +631,7 @@ def get_diff(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
     - old_date
     """
     df = pl.concat([a, b])
-    df = df.sort(by=DATE_AND_CVE)
+    df = df.sort(by=DEFAULT_SORTING_KEY)
     
     df = df.with_columns(
         old_date=pl.col('date').shift().over('cve'),
