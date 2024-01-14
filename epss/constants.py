@@ -37,3 +37,6 @@ DATE = 'date'
 # Partitioning keys
 PARTITIONING_KEYS = {CVE, DATE}
 DEFAULT_PARTITIONING_KEY = DATE
+
+# Sorting keys
+DATE_AND_CVE = (DATE, CVE)

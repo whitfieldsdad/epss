@@ -3,7 +3,7 @@ from typing import Iterable, List, Optional, Iterator
 import datetime
 from epss.constants import TIME, CSV, CSV_GZ, JSON, JSONL, JSON_GZ, JSONL_GZ, PARQUET, FILE_FORMATS
 
-import pandas as pd
+import polars as pl
 import logging
 import os
 import re
@@ -11,7 +11,7 @@ import re
 logger = logging.getLogger(__name__)
 
 
-def read_dataframe(path: str, file_format: Optional[str] = None) -> pd.DataFrame:
+def read_polars_dataframe(path: str, file_format: Optional[str] = None) -> pl.DataFrame:
     if not file_format:
         file_format = get_file_format_from_path(path)
 
@@ -20,20 +20,20 @@ def read_dataframe(path: str, file_format: Optional[str] = None) -> pd.DataFrame
         compression = 'gzip'
 
     if file_format in [CSV, CSV_GZ]:
-        df = pd.read_csv(path, compression=compression)
+        df = pl.read_csv(path, compression=compression)
     elif file_format in [JSON, JSON_GZ]:
-        df = pd.read_json(path, compression=compression)
+        df = pl.read_json(path, compression=compression)
     elif file_format in [JSONL, JSONL_GZ]:
-        df = pd.read_json(path, lines=True, compression=compression)
+        df = pl.read_json(path, lines=True, compression=compression)
     elif file_format in [PARQUET]:
-        df = pd.read_parquet(path)
+        df = pl.read_parquet(path)
     else:
         raise ValueError(f"Unsupported file format: {file_format}")
     
     return df
 
 
-def write_dataframe(df: pd.DataFrame, path: str, file_format: Optional[str] = None):
+def write_polars_dataframe(df: pl.DataFrame, path: str, file_format: Optional[str] = None):
     path = realpath(path)
     if not file_format:
         file_format = get_file_format_from_path(path)
@@ -45,27 +45,20 @@ def write_dataframe(df: pd.DataFrame, path: str, file_format: Optional[str] = No
     logger.debug('Writing %d x %d dataframe to %s (columns: %s)', len(df), len(df.columns), path, tuple(df.columns))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if file_format in [CSV, CSV_GZ]:
-        df.to_csv(path, compression=compression, index=False)
+        df.write_csv(path, compression=compression)
+
     elif file_format in [JSON, JSON_GZ]:
-        df.to_json(path, orient='records', compression=compression, index=False)
+        df.write_json(path, compression=compression, row_oriented=True)
     elif file_format in [JSONL, JSONL_GZ]:
-        df.to_json(path, orient='records', lines=True, compression=compression, index=False)
+        df.write_ndjson(path, compression=compression)
     elif file_format in [PARQUET]:
-        df.to_parquet(path, compression=compression, index=False)
+        df.write_parquet(path)
     else:
         raise ValueError(f"Unsupported output format: {file_format}")
     
     logger.debug('Wrote dataframe to %s', path)
 
 
-def merge_dataframes(dfs: Iterable[pd.DataFrame]) -> pd.DataFrame:
-    return pd.concat(dfs, ignore_index=True)
-
-
-def parse_file_format(file_format: Optional[str]) -> Optional[str]:
-    if file_format is not None and file_format not in FILE_FORMATS:
-        raise ValueError(f"Unsupported file format: {file_format}")
-    return file_format
 
 
 def get_file_format_from_path(path: str) -> str:
