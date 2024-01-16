@@ -94,7 +94,7 @@ def diff_command(a: str, b: str, output_file: Optional[str], output_format: Opti
     df = epss.diff(a, b)
 
     if output_file:
-        util.write_polars_dataframe(df, path=output_file, file_format=output_format)
+        util.write_dataframe(df, path=output_file, file_format=output_format)
     else:
         df['date'] = df['date'].astype(str)
         for _, row in df.iterrows():
@@ -117,7 +117,7 @@ def rolling_diff_command(input_dir: str, output_file: str, output_format: Option
 
         if output_file:
             path = os.path.join(output_file, f'{b.isoformat()}.{output_format}')
-            util.write_polars_dataframe(df, path=path)
+            util.write_dataframe(df, path=path)
         else:
             raise NotImplementedError()
 
@@ -131,9 +131,9 @@ def merge_dataframes_command(input_dir: str, output_file: str, file_format: str)
     Merge a directory of EPSS scores into a single file.
     """
     paths = util.iter_paths(input_dir)
-    dfs = map(util.read_polars_dataframe, paths)
+    dfs = map(util.read_dataframe, paths)
     df = util.merge_dataframes(dfs)
-    util.write_polars_dataframe(df=df, path=output_file, file_format=file_format)
+    util.write_dataframe(df=df, path=output_file, file_format=file_format)
 
 
 @main.command('convert')
@@ -143,8 +143,8 @@ def convert_dataframe_command(input_file: str, output_file: str):
     """
     Convert matrix files between formats.
     """
-    df = util.read_polars_dataframe(input_file)
-    util.write_polars_dataframe(df=df, path=output_file)
+    df = util.read_dataframe(input_file)
+    util.write_dataframe(df=df, path=output_file)
 
 
 @main.command('date-range')
@@ -153,7 +153,7 @@ def date_range_command(input_file: str):
     """
     Print the date range of a file.
     """
-    df = util.read_polars_dataframe(input_file)
+    df = util.read_dataframe(input_file)
     min_date = df['date'].min()
     max_date = df['date'].max()
     print(f"{min_date} - {max_date}")
@@ -165,7 +165,7 @@ def dates_command(input_file: str):
     """
     Print the dates found in a file.
     """
-    df = util.read_polars_dataframe(input_file)
+    df = util.read_dataframe(input_file)
     dates = df['date'].unique()
     for date in sorted(dates):
         print(date)

@@ -10,7 +10,7 @@ services:
     environment:
       POSTGRES_USER: guest
       POSTGRES_HOST_AUTH_METHOD: trust
-      POSTGRES_DB: epss_scores
+      POSTGRES_DB: vulnerabilities
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
     ports:

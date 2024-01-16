@@ -1,2 +1,5 @@
 __pycache__
-data/raw
+.venv/
+.DS_Store
+
+data/

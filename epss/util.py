@@ -1,9 +1,10 @@
 import itertools
-from typing import Iterable, List, Optional, Iterator
+from typing import Iterable, List, Optional, Iterator, Union
 import datetime
-from epss.constants import TIME, CSV, CSV_GZ, JSON, JSONL, JSON_GZ, JSONL_GZ, PARQUET, FILE_FORMATS
+from epss.constants import DEFAULT_FILE_FORMAT, TIME, CSV, CSV_GZ, JSON, JSONL, JSON_GZ, JSONL_GZ, PARQUET, FILE_FORMATS
 
 import polars as pl
+import concurrent.futures
 import logging
 import os
 import re
@@ -11,20 +12,19 @@ import re
 logger = logging.getLogger(__name__)
 
 
-def read_polars_dataframe(path: str, file_format: Optional[str] = None) -> pl.DataFrame:
+def read_dataframe(path: str, file_format: Optional[str] = None) -> pl.DataFrame:
     if not file_format:
         file_format = get_file_format_from_path(path)
 
-    compression = None
     if file_format in [CSV_GZ, JSON_GZ, JSONL_GZ]:
-        compression = 'gzip'
+        raise NotImplementedError("Compression is not supported yet")
 
     if file_format in [CSV, CSV_GZ]:
-        df = pl.read_csv(path, compression=compression)
+        df = pl.read_csv(path)
     elif file_format in [JSON, JSON_GZ]:
-        df = pl.read_json(path, compression=compression)
+        df = pl.read_json(path)
     elif file_format in [JSONL, JSONL_GZ]:
-        df = pl.read_json(path, lines=True, compression=compression)
+        df = pl.read_ndjson(path)
     elif file_format in [PARQUET]:
         df = pl.read_parquet(path)
     else:
@@ -33,24 +33,23 @@ def read_polars_dataframe(path: str, file_format: Optional[str] = None) -> pl.Da
     return df
 
 
-def write_polars_dataframe(df: pl.DataFrame, path: str, file_format: Optional[str] = None):
+def write_dataframe(df: pl.DataFrame, path: str, file_format: Optional[str] = None):
     path = realpath(path)
     if not file_format:
         file_format = get_file_format_from_path(path)
 
-    compression = None
     if file_format in [CSV_GZ, JSON_GZ, JSONL_GZ]:
-        compression = 'gzip'
+        raise NotImplementedError("Compression is not supported yet")
 
     logger.debug('Writing %d x %d dataframe to %s (columns: %s)', len(df), len(df.columns), path, tuple(df.columns))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if file_format in [CSV, CSV_GZ]:
-        df.write_csv(path, compression=compression)
+        df.write_csv(path)
 
     elif file_format in [JSON, JSON_GZ]:
-        df.write_json(path, compression=compression, row_oriented=True)
+        df.write_json(path, row_oriented=True)
     elif file_format in [JSONL, JSONL_GZ]:
-        df.write_ndjson(path, compression=compression)
+        df.write_ndjson(path)
     elif file_format in [PARQUET]:
         df.write_parquet(path)
     else:
@@ -59,6 +58,169 @@ def write_polars_dataframe(df: pl.DataFrame, path: str, file_format: Optional[st
     logger.debug('Wrote dataframe to %s', path)
 
 
+def convert_files_in_dir(
+        input_dir: str,
+        output_dir: Optional[str],
+        input_format: Optional[str] = None,
+        output_format: str = DEFAULT_FILE_FORMAT,
+        overwrite: bool = False):
+    
+    output_format = output_format or DEFAULT_FILE_FORMAT
+    output_dir = output_dir or input_dir
+
+    start_time = datetime.datetime.now()
+
+    input_paths = iter_paths(input_dir, include_dirs=False, recursive=False)
+    if input_format:
+        input_paths = filter(lambda p: get_file_format_from_path(p) == input_format, input_paths)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = []
+        for input_path in input_paths:
+            input_format = get_file_format_from_path(input_path)
+            if input_format == output_format:
+                continue
+
+            filename = os.path.basename(input_path).replace(f'.{input_format}', f'.{output_format}')
+            output_path = os.path.join(output_dir, filename)
+            if os.path.exists(output_path):
+                logger.debug(f"Skipping {input_path} because {output_path} already exists")
+                continue
+
+            future = executor.submit(convert_file, input_path, output_path, overwrite=overwrite)
+            futures.append(future)
+        
+        if futures:
+            total_files = len(futures)
+            logger.info('Converting %d files in %s into %s format and writing to %s', total_files, input_dir, output_format, output_dir)  
+            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+                future.result()
+                logger.debug('Converted %d/%d files', i + 1, total_files)
+            
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            logger.info('Converted %d files in %.2f seconds', total_files, duration)
+
+
+def convert_file(input_file: str, output_file: str, overwrite: bool = False):
+    if os.path.exists(output_file) and not overwrite:
+        logger.debug(f"Skipping {input_file} because {output_file} already exists")
+        return
+
+    df = read_dataframe(input_file)
+    write_dataframe(df, output_file)
+
+
+def sort_dataframe_file(
+        path: str,
+        select_columns: Optional[Union[str, Iterable[str]]] = None,
+        sort_by: Optional[Union[str, Iterable[str]]] = None,
+        sort_rows_descending: Optional[bool] = None,
+        file_format: Optional[str] = None):
+    
+    if not any((select_columns, sort_by, sort_rows_descending)):
+        raise ValueError("At least one of select_columns, sort_by, or sort_rows_descending must be specified")
+    
+    df = read_dataframe(path=path, file_format=file_format)
+    df = sort_dataframe(
+        df=df, 
+        select_columns=select_columns, 
+        sort_by=sort_by, 
+        sort_rows_descending=sort_rows_descending,
+    )
+    write_dataframe(df=df, path=path, file_format=file_format)
+
+
+def sort_dataframe(
+        df: pl.DataFrame,
+        select_columns: Optional[Union[str, Iterable[str]]] = None,
+        sort_by: Optional[Union[str, Iterable[str]]] = None,
+        sort_rows_descending: Optional[bool] = False):
+    
+    if sort_by is not None:
+        df = sort_dataframe_rows(df, by=sort_by, descending=sort_rows_descending)
+
+    if select_columns is not None:
+        df = sort_dataframe_columns(df, by=select_columns)
+    
+    return df
+
+
+def sort_dataframe_rows(
+        df: pl.DataFrame, 
+        by: Union[str, Iterable[str]], 
+        descending: Optional[bool] = False) -> pl.DataFrame:
+
+    descending = descending or False
+    if not by:
+        return df
+
+    by = [by] if isinstance(by, str) else list(by)
+    df = df.sort(by=by, descending=descending)
+    return df
+
+
+def sort_dataframe_columns(df: pl.DataFrame, by: Union[str, Iterable[str]]) -> pl.DataFrame:
+    descending = descending or False
+    if not by:
+        return df
+    
+    by = [by] if isinstance(by, str) else list(by)
+    df = df.select(by)
+    return df
+
+
+def rejig_dataframe_precision(df: pl.DataFrame, n: int, cols: Optional[Iterable[str]] = None) -> pl.DataFrame:
+    """
+    Rejig the floating point precision of the floating point columns in a dataframe.
+    """
+    cols = cols or df.select([pl.col(pl.FLOAT_DTYPES)]).columns
+    df = df.with_columns(
+        [pl.col(c).round(n) for c in cols]
+    )
+    return df
+
+
+def rejig_fp_precision_of_file(
+        path: str,
+        n: int,
+        cols: Optional[Iterable[str]] = None):
+    
+    df = read_dataframe(path)
+    df = rejig_dataframe_precision(df, n=n, cols=cols)
+    write_dataframe(df, path)
+
+
+def rejig_fp_precision_of_files(
+        input_files: Iterable[str],
+        n: int,
+        cols: Optional[Iterable[str]] = None):
+    
+    start_time = datetime.datetime.now()
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = []
+        for input_file in input_files:
+            future = executor.submit(rejig_fp_precision_of_file, path=input_file, n=n, cols=cols)
+            futures.append(future)
+        
+        total_files = len(futures)
+        logger.info('Rejigging precision of %d files', total_files)  
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            future.result()
+            logger.debug('Rejigged precision of %d/%d files', i + 1, total_files)
+        
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        logger.info('Rejigged precision of %d files in %.2f seconds', total_files, duration)
+
+
+def rejig_fp_precision_of_files_in_dir(
+        input_dir: str, 
+        n: int, 
+        cols: Optional[Iterable[str]] = None):
+    
+    paths = iter_paths(input_dir, recursive=True)
+    rejig_fp_precision_of_files(input_files=paths, n=n, cols=cols)
 
 
 def get_file_format_from_path(path: str) -> str:

@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 import shutil
 import sys
-from epss import util
+from epss import util, epss
 from epss.constants import CACHE_DIR, DEFAULT_SORTING_KEY, DEFAULT_FILE_FORMAT, FILE_FORMATS, MIN_DATE, PARQUET, STRS, TIME
-from typing import Any, Dict, List, Optional, Iterable, Iterator, Set, Tuple
+from typing import Dict, Optional, Iterable, Iterator, Set, Tuple
 import concurrent.futures
 import datetime
 import functools 
@@ -15,57 +15,6 @@ import re
 import requests
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class Score:
-    cve: str
-    epss: float
-    percentile: float
-    date: datetime.date
-
-    @property
-    def cve_id(self) -> str:
-        return self.cve
-    
-    @property
-    def score(self) -> float:
-        return self.epss
-
-
-@dataclass
-class ScoreChangelogEntry:
-    date: datetime.date
-    cve: str
-    new_epss: float
-    old_epss: Optional[float]
-    epss_change: Optional[float]
-    epss_change_pct: Optional[float]
-    new_percentile: float
-    old_percentile: Optional[float]
-    percentile_change: Optional[float] 
-    percentile_change_pct: Optional[float]
-
-    @property
-    def cve_id(self) -> str:
-        return self.cve
-
-    @property
-    def score(self) -> Score:
-        return self.new_epss
-
-    def to_score(self) -> Score:
-        return Score(
-            cve=self.cve,
-            epss=self.new_epss,
-            percentile=self.new_percentile,
-            date=self.date,
-        )
-
-
-@dataclass
-class ScoreHistory:
-    scores: Dict[datetime.date, Score]
 
 
 @dataclass()
@@ -101,17 +50,13 @@ class Client:
     - `workdir` 
         - raw-scores-by-date
             - YYYY-MM-DD.parquet
-        - raw-scores-by-date
+        -changelogs-by-date
             - YYYY-MM-DD.parquet
-        -score-changelogs-by-date
-            - YYYY-MM-DD.parquet
-        - score-changelogs-by-cve-id
-            - CVE-YYYY-NNNNN.parquet
-        - facts
-            - score-ranges.parquet
-            - date-ranges.parquet
+        - changelogs-by-cve
+            - CVE-YYYY-NNNN.parquet
     """
     workdir: str = CACHE_DIR
+    floating_point_precision: int = 5
     file_format: str = PARQUET
 
     @property
@@ -119,18 +64,12 @@ class Client:
         return os.path.join(self.workdir, 'raw-scores-by-date')
 
     @property
-    def score_changelogs_by_date_dir(self) -> str:
-        return os.path.join(self.workdir, 'score-changelogs-by-date')
-
-    def clear(self):
-        self.clear_raw_scores_by_date_dir()
-        self.clear_score_changelogs_by_date_dir()
-
-    def clear_raw_scores_by_date_dir(self):
-        shutil.rmtree(self.raw_scores_by_date_dir, ignore_errors=True)
-
-    def clear_score_changelogs_by_date_dir(self):
-        shutil.rmtree(self.score_changelogs_by_date_dir, ignore_errors=True)
+    def changelogs_by_date_dir(self) -> str:
+        return os.path.join(self.workdir, 'changelogs-by-date')
+    
+    @property
+    def changelogs_by_cve_dir(self) -> str:
+        return os.path.join(self.workdir, 'changelogs-by-cve')
 
     @property
     def cve_ids(self) -> Set[str]:
@@ -146,21 +85,42 @@ class Client:
         return get_max_date()
     
     def init(self, min_date: Optional[TIME] = None, max_date: Optional[TIME] = None):
-        """
-        Build the local cache of EPSS scores.
-        """
         self.download_scores_over_time(min_date=min_date, max_date=max_date)
-        self.build_score_changelogs()
-    
-    def build_score_changelogs(self, min_date: Optional[TIME] = None, max_date: Optional[TIME] = None):
-        for df in self.iter_score_changelog_dataframes(min_date=min_date, max_date=max_date):
-            date = df['date'].iloc[0]
-            path = get_file_path(
-                directory=self.score_changelogs_by_date_dir, 
-                date=date, 
+        self.create_partitions(min_date=min_date, max_date=max_date)
+
+    def create_partitions(self, min_date: Optional[TIME] = None, max_date: Optional[TIME] = None):
+        df = self.get_score_changelog_dataframe(min_date=min_date, max_date=max_date)
+        partitions = {
+            self.changelogs_by_date_dir: 'date',
+            self.changelogs_by_cve_dir: 'cve',
+        }
+        for (output_dir, partitioning_key) in partitions.items():
+            epss.write_partitioned_dataframe_to_dir(
+                df=df,
+                output_dir=output_dir,
+                partitioning_key=partitioning_key,
                 file_format=self.file_format,
+                overwrite=True,
             )
-            util.write_polars_dataframe(df=df, path=path)
+
+    def clear(self, delete_downloads: bool = False):
+        """
+        Clear `workdir`.
+
+        If `delete_downloads` is True, also delete the downloaded EPSS scores in `raw_scores_by_date_dir`.
+        """
+        if os.path.exists(self.workdir):
+            directories = {
+                self.changelogs_by_cve_dir,
+                self.changelogs_by_date_dir,
+            }
+            if delete_downloads:
+                directories.add(self.raw_scores_by_date_dir)
+
+            for directory in directories:
+                if os.path.exists(directory):
+                    logger.info('Deleting %s', directory)
+                    shutil.rmtree(directory, ignore_errors=True)
 
     def download_scores_over_time(
             self, 
@@ -266,6 +226,9 @@ class Client:
         min_date = util.parse_date(min_date or self.min_date)
         max_date = util.parse_date(max_date or self.max_date)
 
+        logger.debug('Generating changelog dataframe for %s - %s', min_date, max_date)
+        start_time = datetime.datetime.now()
+
         dfs = self.iter_score_changelog_dataframes(
             query=query,
             min_date=min_date, 
@@ -275,6 +238,10 @@ class Client:
         df = pl.concat(dfs)
         if preserve_order:
             df = df.sort(by=DEFAULT_SORTING_KEY)
+
+        end_time = datetime.datetime.now()
+        logger.debug('Generated changelog dataframe in %.2f', (end_time - start_time).total_seconds())
+        logger.debug('Shape of changelogs dataframe: %s', df.shape)
         return df
 
     def iter_score_changelog_dataframes(
@@ -305,34 +272,6 @@ class Client:
                 for future in futures:
                     df = future.result()
                     yield df
-
-    def iter_score_changelog_entries(
-            self, 
-            query: Optional[Query] = None,
-            min_date: Optional[TIME] = None,
-            max_date: Optional[TIME] = None,
-            preserve_order: bool = True) -> Iterator[ScoreChangelogEntry]:
-        
-        dfs = self.iter_score_changelog_dataframes(
-            query=query,
-            min_date=min_date, 
-            max_date=max_date, 
-            preserve_order=preserve_order,
-        )
-        for df in dfs:
-            for row in df.itertuples():
-                yield ScoreChangelogEntry(
-                    date=row.date,
-                    cve=row.cve,
-                    new_epss=row.new_epss,
-                    old_epss=row.old_epss,
-                    epss_change=row.epss_change,
-                    epss_change_pct=row.epss_change_pct,
-                    new_percentile=row.new_percentile,
-                    old_percentile=row.old_percentile,
-                    percentile_change=row.percentile_change,
-                    percentile_change_pct=row.percentile_change_pct,
-                )
 
     def get_score_by_cve_id(self, cve_id: str, date: Optional[TIME] = None) -> Optional[float]:
         query = get_query(cve_ids=[cve_id])
@@ -370,7 +309,6 @@ class Client:
             df = df.sort(by=DEFAULT_SORTING_KEY)
         return df
     
-    # TODO
     def get_score_range_tuple_by_cve_id(
             self,
             cve_id: str,
@@ -401,7 +339,7 @@ class Client:
 
 
 def read_dataframe(path: str) -> pl.DataFrame:
-    df = util.read_polars_dataframe(path)
+    df = util.read_dataframe(path)
 
     # Insert the `date` column if it's missing.
     if 'date' not in df.columns:
@@ -516,6 +454,80 @@ def filter_dataframe(
         return df
 
 
+def write_partitioned_dataframe_to_dir(
+        df: pl.DataFrame,
+        output_dir: str,
+        partitioning_key: str,
+        file_format: str = DEFAULT_FILE_FORMAT,
+        overwrite: bool = False):
+    """
+    Partition the provided dataframe into (p) partitions where (p) is the number of unique values for the given partitioning key.
+
+    Performance metrics on a dataframe with ~550,000 rows and 11 columns on a 2021 MacBook Pro:
+
+    - 550 partitions: 2 seconds
+    - ~220,000 partitions: 
+    """
+    def get_path(_k: str) -> str:
+        return os.path.join(output_dir, f"{_k}.{file_format}")
+    
+    file_format = file_format or DEFAULT_FILE_FORMAT
+    total_partitions = len(df[partitioning_key].unique())
+    logger.info('Partitioning dataframe with %d rows into %d partitions', len(df), total_partitions)
+
+    # Identify existing partitions.
+    existing_paths = None
+    if overwrite is False:
+        existing_paths = frozenset(util.iter_paths(output_dir))
+    
+    # Partition the dataframe.
+    start_time = datetime.datetime.now()
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = {}
+        for (k, p) in partition_dataframe(df=df, partitioning_key=partitioning_key):
+            path = get_path(k)
+            if overwrite is False and path in existing_paths:
+                continue
+
+            future = executor.submit(util.write_dataframe, df=p, path=path)
+            futures[future] = path  
+    
+        if futures:
+            total_rows, total_columns = df.shape
+            total_partitions = len(futures)
+
+            logger.info('Creating %d partitions over dataframe with %d rows and %d columns', total_partitions, total_rows, total_columns)
+            futures = concurrent.futures.as_completed(futures)
+            for future in futures:
+                future.result()
+    
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            logger.info('Created %d partitions over dataframe with %d rows and %d columns in %.2f seconds', total_partitions, total_rows, total_columns, duration)
+
+
+def partition_dataframe(
+        df: pl.DataFrame,
+        partitioning_key: str = DEFAULT_SORTING_KEY) -> Iterator[Tuple[str, pl.DataFrame]]:
+    
+    if partitioning_key == 'cve':
+        yield from partition_dataframe_by_cve_id(df=df)
+    elif partitioning_key == 'date':
+        yield from partition_dataframe_by_date(df=df)
+    else:
+        raise ValueError(f"Unsupported partitioning key: {partitioning_key}")
+
+
+def partition_dataframe_by_cve_id(df: pl.DataFrame) -> Iterator[Tuple[str, pl.DataFrame]]:
+    for cve_id in df['cve'].unique():
+        yield (cve_id, df.filter(pl.col('cve') == cve_id))
+
+
+def partition_dataframe_by_date(df: pl.DataFrame) -> Iterator[Tuple[str, pl.DataFrame]]:
+    for date in df['date'].unique():
+        yield (date, df.filter(pl.col('date') == date))
+
+
 def download_scores_over_time(
         output_dir: str,
         file_format: str = DEFAULT_FILE_FORMAT,
@@ -568,7 +580,7 @@ def download_scores_by_date(
     if cve_ids:
         df = filter_dataframe(df=df, cve_ids=cve_ids)
 
-    util.write_polars_dataframe(df=df, path=path)
+    util.write_dataframe(df=df, path=path)
     logger.info('Downloaded scores for %s', date)
 
 
@@ -607,7 +619,6 @@ def get_max_date() -> datetime.date:
     return date
 
 
-# TODO
 def get_rolling_diff(dfs: Iterable[pl.DataFrame]) -> Iterator[Tuple[datetime.date, datetime.date, pl.DataFrame]]:
     """
     Assumptions:
@@ -618,7 +629,6 @@ def get_rolling_diff(dfs: Iterable[pl.DataFrame]) -> Iterator[Tuple[datetime.dat
         yield df
 
 
-# TODO
 def get_diff(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
     """
     Adds the following columns:
@@ -631,7 +641,8 @@ def get_diff(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
     - old_date
     """
     df = pl.concat([a, b])
-    df = df.sort(by=DEFAULT_SORTING_KEY)
+    df = df.sort(by=['date', 'cve'])
+    total_before = len(a)
     
     df = df.with_columns(
         old_date=pl.col('date').shift().over('cve'),
@@ -664,4 +675,7 @@ def get_diff(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
         'percentile_change',
         'percentile_change_pct',
     ])
+    total_after = len(df)
+    logger.debug('Dropped %d rows with no change (%.2f%%)', total_before - total_after, ((total_before - total_after) / total_before) * 100)
     return df
+
