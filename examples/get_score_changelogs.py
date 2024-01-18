@@ -25,7 +25,7 @@ def main(
     
     client = Client()
     query = Query(cve_ids=cve_ids)
-    df = client.get_score_changelog_dataframe(
+    df = client.get_historical_diff_dataframe(
         query=query,
         min_date=min_date,
         max_date=max_date,

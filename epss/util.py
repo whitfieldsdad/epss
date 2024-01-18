@@ -1,5 +1,5 @@
 import itertools
-from typing import Iterable, List, Optional, Iterator, Union
+from typing import Dict, Iterable, List, Optional, Iterator, Union
 import datetime
 from epss.constants import DEFAULT_FILE_FORMAT, TIME, CSV, CSV_GZ, JSON, JSONL, JSON_GZ, JSONL_GZ, PARQUET, FILE_FORMATS
 
@@ -56,6 +56,20 @@ def write_dataframe(df: pl.DataFrame, path: str, file_format: Optional[str] = No
         raise ValueError(f"Unsupported output format: {file_format}")
     
     logger.debug('Wrote dataframe to %s', path)
+
+
+def query_dataframe_with_sql(df: pl.DataFrame, table_name: str, sql_query: str):
+    sql = pl.SQLContext()
+    sql.register(table_name, df)
+    df = sql.execute(sql_query).collect()
+    return df
+
+
+def query_dataframes_with_sql(dfs: Dict[str, pl.DataFrame], sql_query: str):
+    sql = pl.SQLContext()
+    sql.register_many(dfs)
+    df = sql.execute(sql_query).collect()
+    return df
 
 
 def convert_files_in_dir(

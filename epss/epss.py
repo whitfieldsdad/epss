@@ -1,9 +1,8 @@
 from dataclasses import dataclass
 import shutil
-import sys
 from epss import util, epss
 from epss.constants import CACHE_DIR, DEFAULT_SORTING_KEY, DEFAULT_FILE_FORMAT, FILE_FORMATS, MIN_DATE, PARQUET, STRS, TIME
-from typing import Dict, Optional, Iterable, Iterator, Set, Tuple
+from typing import Optional, Iterable, Iterator, Set, Tuple
 import concurrent.futures
 import datetime
 import functools 
@@ -56,7 +55,6 @@ class Client:
             - CVE-YYYY-NNNN.parquet
     """
     workdir: str = CACHE_DIR
-    floating_point_precision: int = 5
     file_format: str = PARQUET
 
     @property
@@ -73,7 +71,7 @@ class Client:
 
     @property
     def cve_ids(self) -> Set[str]:
-        df = self.get_scores_dataframe_by_date(date=self.max_date)
+        df = self.get_score_dataframe(date=self.max_date)
         return set(df['cve'].unique())
 
     @property
@@ -89,7 +87,7 @@ class Client:
         self.create_partitions(min_date=min_date, max_date=max_date)
 
     def create_partitions(self, min_date: Optional[TIME] = None, max_date: Optional[TIME] = None):
-        df = self.get_score_changelog_dataframe(min_date=min_date, max_date=max_date)
+        df = self.get_historical_diff_dataframe(min_date=min_date, max_date=max_date)
         partitions = {
             self.changelogs_by_date_dir: 'date',
             self.changelogs_by_cve_dir: 'cve',
@@ -104,11 +102,6 @@ class Client:
             )
 
     def clear(self, delete_downloads: bool = False):
-        """
-        Clear `workdir`.
-
-        If `delete_downloads` is True, also delete the downloaded EPSS scores in `raw_scores_by_date_dir`.
-        """
         if os.path.exists(self.workdir):
             directories = {
                 self.changelogs_by_cve_dir,
@@ -119,7 +112,7 @@ class Client:
 
             for directory in directories:
                 if os.path.exists(directory):
-                    logger.info('Deleting %s', directory)
+                    logger.debug('Deleting %s', directory)
                     shutil.rmtree(directory, ignore_errors=True)
 
     def download_scores_over_time(
@@ -127,9 +120,7 @@ class Client:
             min_date: Optional[TIME] = None, 
             max_date: Optional[TIME] = None,
             overwrite: bool = False):
-        """
-        Download daily sets of EPSS scores over the given date range.
-        """
+
         min_date = util.parse_date(min_date or self.min_date)
         max_date = util.parse_date(max_date or self.max_date)
 
@@ -152,84 +143,52 @@ class Client:
                 for future in futures:
                     future.result()
 
-    def get_scores_dataframe_by_date(
+    def download_scores_by_date(
+            self,
+            date: TIME,
+            path: str,
+            cve_ids: Optional[STRS] = None):
+        
+        return download_scores_by_date(
+            date=date,
+            path=path,
+            cve_ids=cve_ids,
+        )
+
+    def get_score_dataframe(
             self,
             date: Optional[TIME] = None,
             query: Optional[Query] = None) -> pl.DataFrame:
-        
+
         date = util.parse_date(date or self.max_date)
         path = get_file_path(directory=self.raw_scores_by_date_dir, date=date, file_format=self.file_format)
         if not os.path.exists(path):
             self.download_scores_by_date(date=date)
 
-        df = read_dataframe(path)
-        if query:
-            df = filter_dataframe_with_query(df=df, query=query)
+        df = self.read_dataframe(path, query=query)
         return df
     
-    def read_scores_dataframe(
+    def read_dataframe(
             self,
             path: str,
             query: Optional[Query] = None) -> pl.DataFrame:
+
         return read_dataframe(path=path, query=query)
         
-    def download_scores_by_date(
-            self, 
-            date: Optional[TIME] = None,
-            overwrite: bool = False):
-
-        date = util.parse_date(date or self.max_date)
-        path = get_file_path(
-            directory=self.raw_scores_by_date_dir, 
-            date=date, 
-            file_format=self.file_format,
-        )
-        if os.path.exists(path) and not overwrite:
-            return
-
-        download_scores_by_date(date=date, path=path)        
-
-    def iter_daily_score_dataframes(
-            self,
-            query: Optional[Query] = None,
-            min_date: Optional[TIME] = None,
-            max_date: Optional[TIME] = None,
-            preserve_order: bool = True) -> Iterator[pl.DataFrame]:
-        
-        min_date = util.parse_date(min_date or self.min_date)
-        max_date = util.parse_date(max_date or self.max_date)
-
-        dates = util.iter_dates_in_range(min_date=min_date, max_date=max_date)
-        if preserve_order:
-            for date in dates:
-                df = self.get_scores_dataframe_by_date(query=query, date=date)
-                yield df
-        else:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = {}
-                for date in dates:
-                    future = executor.submit(self.get_scores_dataframe_by_date, query=query, date=date)
-                    futures[future] = date
-                
-                futures = concurrent.futures.as_completed(futures)
-                for future in futures:
-                    df = future.result()
-                    yield df
-
-    def get_score_changelog_dataframe(
+    def get_historical_diff_dataframe(
             self,
             query: Optional[Query] = None,
             min_date: Optional[TIME] = None,
             max_date: Optional[TIME] = None,
             preserve_order: bool = True) -> pl.DataFrame:
-        
+
         min_date = util.parse_date(min_date or self.min_date)
         max_date = util.parse_date(max_date or self.max_date)
-
+    
         logger.debug('Generating changelog dataframe for %s - %s', min_date, max_date)
         start_time = datetime.datetime.now()
 
-        dfs = self.iter_score_changelog_dataframes(
+        dfs = self.iter_score_diff_dataframes(
             query=query,
             min_date=min_date, 
             max_date=max_date, 
@@ -243,8 +202,28 @@ class Client:
         logger.debug('Generated changelog dataframe in %.2f', (end_time - start_time).total_seconds())
         logger.debug('Shape of changelogs dataframe: %s', df.shape)
         return df
+    
+    def get_score_diff_dataframe(
+            self, 
+            first_date: TIME, 
+            second_date: TIME, 
+            query: Optional[Query] = None) -> pl.DataFrame:
+        
+        first_date = util.parse_date(first_date)
+        second_date = util.parse_date(second_date)
 
-    def iter_score_changelog_dataframes(
+        path = get_file_path(directory=self.changelogs_by_date_dir, date=second_date, file_format=self.file_format)
+        if os.path.exists(path):
+            df = self.read_dataframe(path=path, query=query)
+        else:
+            a = self.get_score_dataframe(date=first_date, query=query)
+            b = self.get_score_dataframe(date=second_date, query=query)
+            df = get_diff(a, b)
+            util.write_dataframe(df=df, path=path)
+        
+        return df
+
+    def iter_score_diff_dataframes(
             self, 
             query: Optional[Query] = None, 
             min_date: Optional[TIME] = None, 
@@ -255,17 +234,15 @@ class Client:
         max_date = util.parse_date(max_date or self.max_date)
         dates = util.iter_dates_in_range(min_date=min_date, max_date=max_date)
 
-        dfs = map(lambda date: self.get_scores_dataframe_by_date(query=query, date=date), dates)
-
         if preserve_order:
-            for (a, b) in util.iter_pairwise(dfs):
-                df = get_diff(a, b)
+            for (a, b) in util.iter_pairwise(dates):
+                df = self.get_score_diff_dataframe(first_date=a, second_date=b, query=query)
                 yield df
         else:
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = []
-                for (a, b) in util.iter_pairwise(dfs):
-                    future = executor.submit(get_diff, a, b)
+                for (a, b) in util.iter_pairwise(dates):
+                    future = executor.submit(self.get_score_diff_dataframe, a, b, query=query)
                     futures.append(future)
                 
                 futures = concurrent.futures.as_completed(futures)
@@ -275,7 +252,7 @@ class Client:
 
     def get_score_by_cve_id(self, cve_id: str, date: Optional[TIME] = None) -> Optional[float]:
         query = get_query(cve_ids=[cve_id])
-        df = self.get_scores_dataframe_by_date(query=query, date=date)
+        df = self.get_score_dataframe(query=query, date=date)
         return df['epss'].max()
     
     def get_score_range_dataframe(
@@ -285,7 +262,7 @@ class Client:
             max_date: Optional[TIME] = None,
             preserve_order: bool = True) -> pl.DataFrame:
         
-        df = self.get_score_changelog_dataframe(
+        df = self.get_historical_diff_dataframe(
             query=query,
             min_date=min_date,
             max_date=max_date,
@@ -305,6 +282,7 @@ class Client:
             epss_change_pct=(pl.col('epss_change') / pl.col('min_epss')) * 100,
             percentile_change_pct=(pl.col('percentile_change') / pl.col('min_percentile')) * 100,
         )
+        df = util.rejig_dataframe_precision(df=df, n=5)
         if preserve_order:
             df = df.sort(by=DEFAULT_SORTING_KEY)
         return df
@@ -338,7 +316,7 @@ class Client:
         return (o['min_percentile'], o['max_percentile'])
 
 
-def read_dataframe(path: str) -> pl.DataFrame:
+def read_dataframe(path: str, query: Optional[Query] = None) -> pl.DataFrame:
     df = util.read_dataframe(path)
 
     # Insert the `date` column if it's missing.
@@ -347,15 +325,18 @@ def read_dataframe(path: str) -> pl.DataFrame:
         df = df.with_columns(
             date=date,
         )
-    
+
+    if query:
+        df = filter_dataframe_with_query(df=df, query=query)
     return df
 
 
-def read_score_dataframes(
-        paths: STRS, 
+def read_dataframes(
+        paths: STRS,
+        query: Optional[Query] = None,
         preserve_order: bool = False) -> Iterator[pl.DataFrame]:
     
-    f = functools.partial(read_dataframe)
+    f = functools.partial(read_dataframe, query=query)
     if preserve_order:
         yield from map(f, paths)
     else:
@@ -473,7 +454,7 @@ def write_partitioned_dataframe_to_dir(
     
     file_format = file_format or DEFAULT_FILE_FORMAT
     total_partitions = len(df[partitioning_key].unique())
-    logger.info('Partitioning dataframe with %d rows into %d partitions', len(df), total_partitions)
+    logger.debug('Partitioning dataframe with %d rows into %d partitions', len(df), total_partitions)
 
     # Identify existing partitions.
     existing_paths = None
@@ -496,14 +477,14 @@ def write_partitioned_dataframe_to_dir(
             total_rows, total_columns = df.shape
             total_partitions = len(futures)
 
-            logger.info('Creating %d partitions over dataframe with %d rows and %d columns', total_partitions, total_rows, total_columns)
+            logger.debug('Creating %d partitions over dataframe with %d rows and %d columns', total_partitions, total_rows, total_columns)
             futures = concurrent.futures.as_completed(futures)
             for future in futures:
                 future.result()
     
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
-            logger.info('Created %d partitions over dataframe with %d rows and %d columns in %.2f seconds', total_partitions, total_rows, total_columns, duration)
+            logger.debug('Created %d partitions over dataframe with %d rows and %d columns in %.2f seconds', total_partitions, total_rows, total_columns, duration)
 
 
 def partition_dataframe(
@@ -562,12 +543,12 @@ def download_scores_over_time(
 def download_scores_by_date(
         date: TIME,
         path: str,
-        cve_ids: Optional[STRS] = None):
+        query: Optional[Query] = None):
     
     date = util.parse_date(date)
     url = get_download_url(date=date)
 
-    logger.info('Downloading scores for %s from %s to %s', date, url, path)
+    logger.debug('Downloading scores for %s from %s to %s', date, url, path)
     response = requests.get(url, stream=True)
     response.raise_for_status()
 
@@ -577,19 +558,24 @@ def download_scores_by_date(
     df.with_columns(
         date=date,
     )
-    if cve_ids:
-        df = filter_dataframe(df=df, cve_ids=cve_ids)
+    if query:
+        df = filter_dataframe_with_query(df=df, query=query)
+        if df.is_empty():
+            logger.warning('No matching scores found for %s', date)
+            return
 
     util.write_dataframe(df=df, path=path)
-    logger.info('Downloaded scores for %s', date)
+    logger.debug('Downloaded scores for %s', date)
 
 
 def get_file_path(
         date: TIME,
         directory: str, 
         file_format: str) -> str:
-
+    
+    assert date is not None, "No date provided"
     date = util.parse_date(date)
+
     assert file_format in FILE_FORMATS, f"Unsupported file format: {file_format}"
     return os.path.join(directory, f"{date.isoformat()}.{file_format}")
 
@@ -605,7 +591,7 @@ def get_min_date() -> datetime.date:
 
 def get_max_date() -> datetime.date:
     url = "https://epss.cyentia.com/epss_scores-current.csv.gz"
-    logger.info('Resolving latest publication date for EPSS scores via %s', url)
+    logger.debug('Resolving latest publication date for EPSS scores via %s', url)
 
     response = requests.head(url)
     location = response.headers["Location"]
@@ -615,18 +601,8 @@ def get_max_date() -> datetime.date:
     assert match is not None, f"No date found in {location}"
     date = datetime.date.fromisoformat(match.group(1))
 
-    logger.info('Latest publication date for EPSS scores is %s', date)
+    logger.debug('Latest publication date for EPSS scores is %s', date)
     return date
-
-
-def get_rolling_diff(dfs: Iterable[pl.DataFrame]) -> Iterator[Tuple[datetime.date, datetime.date, pl.DataFrame]]:
-    """
-    Assumptions:
-    - The input dataframes are sorted chronologically.
-    """
-    for (a, b) in util.iter_pairwise(dfs):
-        df = get_diff(a, b)
-        yield df
 
 
 def get_diff(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
@@ -657,6 +633,7 @@ def get_diff(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
         epss_change_pct=(pl.col('epss_change') / pl.col('old_epss')) * 100,
         percentile_change_pct=(pl.col('percentile_change') / pl.col('old_percentile')) * 100,
     )
+    df = util.rejig_dataframe_precision(df=df, n=5)
 
     # Drop rows where old_epss is not null and epss_change is 0.
     df = df.filter(pl.col('old_epss').is_not_null() & (pl.col('epss_change') != 0))

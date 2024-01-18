@@ -16,6 +16,7 @@ polars = "^0.20.3"
 
 [tool.poetry.scripts]
 epss = "epss.cli:main"
+client = "epss.cli:main"
 
 [build-system]
 requires = ["poetry-core"]
