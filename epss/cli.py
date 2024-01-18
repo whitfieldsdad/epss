@@ -15,8 +15,13 @@ logger = logging.getLogger(__name__)
 cfg = pl.Config()
 cfg.set_tbl_rows(-1)
 
-
 DEFAULT_TABLE_NAME = 'df'
+
+TABLE = 'table'
+OUTPUT_FORMATS = FILE_FORMATS + [TABLE]
+
+DEFAULT_FILE_OUTPUT_FORMAT = PARQUET
+DEFAULT_CONSOLE_OUTPUT_FORMAT = TABLE
 
 
 @click.group()
@@ -61,61 +66,9 @@ def clear(ctx: click.Context):
     client.clear()
 
 
-@main.command('diffs')
-@click.option('--cve-id', '-c', 'cve_ids', multiple=True, help='CVE IDs')
-@click.option('--min-date', '-a', default=MIN_DATE, show_default=True, help='Minimum date')
-@click.option('--max-date', '-b', default=None, help='Maximum date')
-@click.option('--date', '-d', default=None, help='Date')
-@click.option('--days-ago', '-n', type=int, default=None, help='Number of days ago')
-@click.option('--output-file', '-o', default=None, help='Output file/directory')
-@click.option('--sql-query', '-s', default=None, help='SQL query')
-@click.option('--sql-table-name', '-t', default=DEFAULT_TABLE_NAME, show_default=True, help='SQL table name')
-@click.pass_context
-def get_diffs_cli(
-    ctx: click.Context, 
-    cve_ids: Optional[Iterable[str]], 
-    min_date: Optional[str],
-    max_date: Optional[str],
-    date: Optional[str],
-    days_ago: Optional[int],
-    output_file: Optional[str],
-    sql_query: Optional[str],
-    sql_table_name: Optional[str]):
-    """
-    Get a rolling diff of scores over time between two dates.
-    """
-    client: Client = ctx.obj['client']
-
-    min_date, max_date = get_date_range(
-        client=client,
-        min_date=min_date,
-        max_date=max_date,
-        date=date,
-        days_ago=days_ago,
-    )
-
-    query = None
-    if cve_ids:
-        query = Query(cve_ids=cve_ids)
-
-    df = client.get_historical_diff_dataframe(
-        query=query,
-        min_date=min_date, 
-        max_date=max_date,
-    )
-
-    if sql_query:
-        sql_table_name = sql_table_name or DEFAULT_TABLE_NAME
-        df = util.query_dataframes_with_sql({sql_table_name: df}, sql_query=sql_query)
-
-    if output_file:
-        util.write_dataframe(df, output_file)
-    else:
-        print(df)
-    
-
-@main.command('diff')
-@click.argument('cve-ids', nargs=-1, required=False, type=str)
+@main.command('history')
+@click.option('--cve-id', '-c', 'cve_ids', multiple=True, help='CVE ID')
+@click.option('--cve-id-file', '-i', 'cve_id_files', multiple=True, default=None, help='CVE IDs file (one per line)')
 @click.option('--min-date', '-a', default=MIN_DATE, show_default=True, help='Minimum date')
 @click.option('--max-date', '-b', default=None, help='Maximum date')
 @click.option('--date', '-d', default=None, help='Date')
@@ -123,17 +76,20 @@ def get_diffs_cli(
 @click.option('--sql-query', '-s', default=None, help='SQL query')
 @click.option('--sql-table-name', '-t', default=DEFAULT_TABLE_NAME, show_default=True, help='SQL table name')
 @click.option('--output-file', '-o', default=None, help='Output file/directory')
+@click.option('--output-format', '-f', default=None, type=click.Choice(OUTPUT_FORMATS), help='Output file format')
 @click.pass_context
-def get_diff_cli(
+def get_history_cli(
     ctx: click.Context, 
     cve_ids: Optional[Iterable[str]], 
+    cve_id_files: Optional[str],
     min_date: Optional[str],
     max_date: Optional[str],
     date: Optional[str],
     days_ago: Optional[int],
     sql_query: Optional[str],
     sql_table_name: Optional[str],
-    output_file: Optional[str]):
+    output_file: Optional[str],
+    output_format: Optional[str]):
     """
     Get a diff of scores on two dates.
     """
@@ -146,26 +102,88 @@ def get_diff_cli(
         date=date,
         days_ago=days_ago,
     )
-    logger.info("Calculating diff from %s to %s", min_date.isoformat(), max_date.isoformat())
 
     query = None
-    if cve_ids:
-        query = Query(cve_ids=cve_ids)
+    if cve_ids or cve_id_files:
+        query = Query(cve_ids=cve_ids, cve_id_files=cve_id_files)
 
-    df = client.get_score_diff_dataframe(
-        query=query,
-        first_date=min_date,
-        second_date=max_date,
+    df = client.get_score_history_dataframe(
+        query=query, 
+        min_date=min_date,
+        max_date=max_date,
     )
+    df = df.sort(['date', 'cve'])
 
     if sql_query:
         sql_table_name = sql_table_name or DEFAULT_TABLE_NAME
         df = util.query_dataframes_with_sql({sql_table_name: df}, sql_query=sql_query)
 
-    if output_file:
-        util.write_dataframe(df, output_file)
+    write_output(df, output_file=output_file, output_format=output_format)
+
+
+@main.command('diff')
+@click.option('--cve-id', '-c', 'cve_ids', multiple=True, help='CVE ID')
+@click.option('--cve-id-file', '-i', 'cve_id_files', multiple=True, default=None, help='CVE IDs file (one per line)')
+@click.option('--min-date', '-a', default=MIN_DATE, show_default=True, help='Minimum date')
+@click.option('--max-date', '-b', default=None, help='Maximum date')
+@click.option('--date', '-d', default=None, help='Date')
+@click.option('--days-ago', '-n', type=int, default=None, help='Number of days ago')
+@click.option('--sql-query', '-s', default=None, help='SQL query')
+@click.option('--sql-table-name', '-t', default=DEFAULT_TABLE_NAME, show_default=True, help='SQL table name')
+@click.option('--output-file', '-o', default=None, help='Output file/directory')
+@click.option('--output-format', '-f', default=None, type=click.Choice(OUTPUT_FORMATS), help='Output file format')
+@click.option('--diff/--rolling', default=True, help="Whether to diff (a, b) or to calculate a rolling diff (a, a + 1, a + 2, ... a + n)")
+@click.pass_context
+def get_diff_cli(
+    ctx: click.Context, 
+    cve_ids: Optional[Iterable[str]], 
+    cve_id_files: Optional[str],
+    min_date: Optional[str],
+    max_date: Optional[str],
+    date: Optional[str],
+    days_ago: Optional[int],
+    sql_query: Optional[str],
+    sql_table_name: Optional[str],
+    output_file: Optional[str],
+    output_format: Optional[str],
+    diff: bool):
+    """
+    Get a diff of scores on two dates.
+    """
+    client: Client = ctx.obj['client']
+
+    min_date, max_date = get_date_range(
+        client=client,
+        min_date=min_date,
+        max_date=max_date,
+        date=date,
+        days_ago=days_ago,
+    )
+
+    query = None
+    if cve_ids or cve_id_files:
+        query = Query(cve_ids=cve_ids, cve_id_files=cve_id_files)
+
+    if diff:
+        df = client.get_score_diff_dataframe(
+            first_date=min_date,
+            second_date=max_date,
+            query=query,
+        )
     else:
-        print(df)
+        df = client.get_historical_diff_dataframe(
+            min_date=min_date,
+            max_date=max_date,
+            query=query,
+        )
+
+    df = df.sort(['date', 'cve'])
+
+    if sql_query:
+        sql_table_name = sql_table_name or DEFAULT_TABLE_NAME
+        df = util.query_dataframes_with_sql({sql_table_name: df}, sql_query=sql_query)
+
+    write_output(df, output_file=output_file, output_format=output_format)
 
 
 @main.command('date-range')
@@ -220,6 +238,25 @@ def get_date_range(
         days_ago = max(days_ago, 1)
         min_date = max_date - datetime.timedelta(days=days_ago)
     return min_date or client.min_date, max_date or client.max_date
+
+
+def write_output(df: pl.DataFrame, output_file: Optional[str], output_format: Optional[str]):
+    if output_file:
+        output_format = output_format or DEFAULT_FILE_OUTPUT_FORMAT
+        util.write_dataframe(df, output_file)
+    else:
+        output_format = output_format or DEFAULT_CONSOLE_OUTPUT_FORMAT
+        if output_format == TABLE:
+            print(df)
+        elif output_format == JSON:
+            print(json.dumps(df.to_dicts(), cls=JSONEncoder))
+        elif output_format == JSONL:
+            for d in df.to_dicts():
+                print(json.dumps(d, cls=JSONEncoder))
+        elif output_format == CSV:
+            print(df.write_csv()) 
+        else:
+            raise ValueError(f"Invalid output format: {output_format}")
 
 
 if __name__ == '__main__':

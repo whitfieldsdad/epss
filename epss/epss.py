@@ -19,26 +19,13 @@ logger = logging.getLogger(__name__)
 @dataclass()
 class Query:
     cve_ids: Optional[STRS] = None
+    cve_id_files: Optional[STRS] = None
     min_score: Optional[float] = None
     max_score: Optional[float] = None
     min_percentile: Optional[float] = None
     max_percentile: Optional[float] = None
-
-
-def get_query(
-        cve_ids: Optional[STRS] = None,
-        min_score: Optional[float] = None,
-        max_score: Optional[float] = None,
-        min_percentile: Optional[float] = None,
-        max_percentile: Optional[float] = None) -> Query:
-    
-    return Query(
-        cve_ids=cve_ids,
-        min_score=min_score,
-        max_score=max_score,
-        min_percentile=min_percentile,
-        max_percentile=max_percentile,
-    )
+    min_date: Optional[float] = None
+    max_date: Optional[float] = None
 
 
 @dataclass()
@@ -168,6 +155,50 @@ class Client:
         df = self.read_dataframe(path, query=query)
         return df
     
+    def iter_score_dataframes(
+            self,
+            query: Optional[Query] = None,
+            min_date: Optional[TIME] = None,
+            max_date: Optional[TIME] = None,
+            preserve_order: bool = True) -> Iterator[pl.DataFrame]:
+        
+        min_date = util.parse_date(min_date or self.min_date)
+        max_date = util.parse_date(max_date or self.max_date)
+
+        if preserve_order:
+            for date in util.iter_dates_in_range(min_date=min_date, max_date=max_date):
+                df = self.get_score_dataframe(date=date, query=query)
+                yield df
+        else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = []
+                for date in util.iter_dates_in_range(min_date=min_date, max_date=max_date):
+                    future = executor.submit(self.get_score_dataframe, date, query)
+                    futures.append(future)
+                
+                futures = concurrent.futures.as_completed(futures)
+                for future in futures:
+                    df = future.result()
+                    yield df
+
+    def get_score_history_dataframe(
+            self,
+            query: Optional[Query] = None,
+            min_date: Optional[TIME] = None,
+            max_date: Optional[TIME] = None,
+            preserve_order: bool = True) -> pl.DataFrame:
+        
+        dfs = self.iter_score_dataframes(
+            query=query,
+            min_date=min_date,
+            max_date=max_date,
+            preserve_order=preserve_order,
+        )
+        df = pl.concat(dfs)
+        if preserve_order:
+            df = df.sort(by=DEFAULT_SORTING_KEY)
+        return df
+
     def read_dataframe(
             self,
             path: str,
@@ -251,7 +282,7 @@ class Client:
                     yield df
 
     def get_score_by_cve_id(self, cve_id: str, date: Optional[TIME] = None) -> Optional[float]:
-        query = get_query(cve_ids=[cve_id])
+        query = Query(cve_ids=[cve_id])
         df = self.get_score_dataframe(query=query, date=date)
         return df['epss'].max()
     
@@ -293,7 +324,7 @@ class Client:
             min_date: Optional[TIME] = None,
             max_date: Optional[TIME] = None) -> Tuple[float, float]:
         
-        query = get_query(cve_ids=[cve_id])
+        query = Query(cve_ids=[cve_id])
         df = self.get_score_range_dataframe(query=query, min_date=min_date, max_date=max_date)
         if len(df) == 0:
             raise ValueError(f"No EPSS scores found for {cve_id}")
@@ -307,7 +338,7 @@ class Client:
             min_date: Optional[TIME] = None,
             max_date: Optional[TIME] = None) -> Tuple[float, float]:
         
-        query = get_query(cve_ids=[cve_id])
+        query = Query(cve_ids=[cve_id])
         df = self.get_score_range_dataframe(query=query, min_date=min_date, max_date=max_date)
         if len(df) == 0:
             raise ValueError(f"No EPSS scores found for {cve_id}")
@@ -344,52 +375,26 @@ def read_dataframes(
             yield from executor.map(f, paths)
 
 
-def filter_dataframes_with_query(dfs: pl.DataFrame, query: Optional[Query]) -> Iterator[pl.DataFrame]:
-        for df in dfs:
-            if query:
-                df = filter_dataframe_with_query(df=df, query=query)
-            yield df
-
-
 def filter_dataframe_with_query(df: pl.DataFrame, query: Optional[Query] = None) -> pl.DataFrame:
     if query:
         df = filter_dataframe(
             df=df,
             cve_ids=query.cve_ids,
+            cve_id_files=query.cve_id_files,
             min_score=query.min_score,
             max_score=query.max_score,
             min_percentile=query.min_percentile,
             max_percentile=query.max_percentile,
+            min_date=query.min_date,
+            max_date=query.max_date,
         )
     return df
-
-
-def filter_dataframes(
-        dfs: Iterable[pl.DataFrame],
-        cve_ids: Optional[STRS] = None,
-        min_score: Optional[float] = None,
-        max_score: Optional[float] = None,
-        min_percentile: Optional[float] = None,
-        max_percentile: Optional[float] = None,
-        min_date: Optional[TIME] = MIN_DATE,
-        max_date: Optional[TIME] = None) -> Iterator[pl.DataFrame]:
-    
-    f = functools.partial(
-        filter_dataframe,
-        cve_ids=cve_ids,
-        min_score=min_score,
-        max_score=max_score,
-        min_percentile=min_percentile,
-        max_percentile=max_percentile,
-        min_date=min_date,
-        max_date=max_date,
-    )
-    yield from map(f, dfs)
 
 
 def filter_dataframe(
         df: pl.DataFrame,
         cve_ids: Optional[STRS] = None,
+        cve_id_files: Optional[STRS] = None,
         min_score: Optional[float] = None,
         max_score: Optional[float] = None,
         min_percentile: Optional[float] = None,
@@ -401,6 +406,11 @@ def filter_dataframe(
         max_date = util.parse_date(max_date) if max_date else None
 
         predicates = []
+
+        if cve_id_files:
+            cve_ids = set()
+            for path in cve_id_files:
+                cve_ids.update(util.read_non_blank_lines(path))
 
         if cve_ids:
             predicates.append(pl.col('cve').is_in(cve_ids))
@@ -640,8 +650,8 @@ def get_diff(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
 
     # Reorder columns.
     df = df.select([
-        'cve',
         'date',
+        'cve',
         'epss',
         'percentile',
         'old_date',

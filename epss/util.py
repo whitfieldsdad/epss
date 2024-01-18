@@ -1,7 +1,7 @@
 import itertools
 from typing import Dict, Iterable, List, Optional, Iterator, Union
 import datetime
-from epss.constants import DEFAULT_FILE_FORMAT, TIME, CSV, CSV_GZ, JSON, JSONL, JSON_GZ, JSONL_GZ, PARQUET, FILE_FORMATS
+from epss.constants import DEFAULT_FILE_FORMAT, TIME, CSV, JSON, JSONL, PARQUET, FILE_FORMATS
 
 import polars as pl
 import concurrent.futures
@@ -16,14 +16,11 @@ def read_dataframe(path: str, file_format: Optional[str] = None) -> pl.DataFrame
     if not file_format:
         file_format = get_file_format_from_path(path)
 
-    if file_format in [CSV_GZ, JSON_GZ, JSONL_GZ]:
-        raise NotImplementedError("Compression is not supported yet")
-
-    if file_format in [CSV, CSV_GZ]:
+    if file_format in [CSV]:
         df = pl.read_csv(path)
-    elif file_format in [JSON, JSON_GZ]:
+    elif file_format in [JSON]:
         df = pl.read_json(path)
-    elif file_format in [JSONL, JSONL_GZ]:
+    elif file_format in [JSONL]:
         df = pl.read_ndjson(path)
     elif file_format in [PARQUET]:
         df = pl.read_parquet(path)
@@ -38,17 +35,14 @@ def write_dataframe(df: pl.DataFrame, path: str, file_format: Optional[str] = No
     if not file_format:
         file_format = get_file_format_from_path(path)
 
-    if file_format in [CSV_GZ, JSON_GZ, JSONL_GZ]:
-        raise NotImplementedError("Compression is not supported yet")
-
     logger.debug('Writing %d x %d dataframe to %s (columns: %s)', len(df), len(df.columns), path, tuple(df.columns))
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    if file_format in [CSV, CSV_GZ]:
+    if file_format in [CSV]:
         df.write_csv(path)
 
-    elif file_format in [JSON, JSON_GZ]:
+    elif file_format in [JSON]:
         df.write_json(path, row_oriented=True)
-    elif file_format in [JSONL, JSONL_GZ]:
+    elif file_format in [JSONL]:
         df.write_ndjson(path)
     elif file_format in [PARQUET]:
         df.write_parquet(path)
@@ -378,3 +372,11 @@ def iter_chunks(iterable: Iterable, chunk_size: int) -> Iterator:
         if not chunk:
             break
         yield chunk
+
+
+def read_non_blank_lines(path: str) -> Iterator[str]:
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                yield line

@@ -15,14 +15,11 @@ STRS = Iterable[str]
 
 # File formats
 CSV = 'csv'
-CSV_GZ = 'csv.gz'
 JSON = 'json'
 JSONL = 'jsonl'
-JSON_GZ = 'json.gz'
-JSONL_GZ = 'jsonl.gz'
 PARQUET = 'parquet'
 
-FILE_FORMATS = [CSV, CSV_GZ, JSON, JSONL, JSON_GZ, JSONL_GZ, PARQUET]
+FILE_FORMATS = [CSV, JSON, JSONL, PARQUET]
 DEFAULT_FILE_FORMAT = PARQUET
 
 # File handling
