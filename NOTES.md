@@ -37,3 +37,10 @@
 - Quantization consists of dropping EPSS scores that have not changed since the previous day
 - Quantization resulted in a ~99.19% decrease in data volume (68,920,743 rows to 555,739 rows) as well as a representative decrease in the in-memory size of the resulting matrix (~2.65 GB to ~22 MB)
 - The quantization process process took approximately 10 seconds to complete with Polars on a 2021 MacBook Pro with the Apple M1 Pro Chipset, including the time required to load the data in to memory from 328 different Parquet files containing the output of the EPSS v3 (v2023-03-01) model for 2023-03-07 to 2024-01-28.
+ 
+| State | File format | File size | Approximate % reduction over worst case |
+| ----- | ----------- | --------- | ----------- |
+| Pre-quantization | CSV | 2.6 GB | n/a |
+| Pre-quantization | Parquet | 382 MB | 85.31% |
+| Post-quantization | CSV | 22 MB | 99.15% |
+| Post-quantization | Parquet | 4.5 MB | 99.83% |
