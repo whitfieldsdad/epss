@@ -1,7 +1,34 @@
 # TODO
 
-Document how to:
-
-- [ ] Calculate score changelogs for all vulnerabilities
-- [ ] Calculate score changelogs for specific vulnerabilities
-- [ ] Calculate score changelogs for specific vulnerabilities and specific dates
+- [ ] Fix calculation of day-to-day diffs, first date shouldn't include all scores
+- [ ] Document how to query matrices with DuckDB
+- [ ] Write scripts for partitioning matrices by date, CVE ID, or percentile
+- [ ] Generate Excel workbooks containing changelogs for EPSS scores by CVE ID
+    - [ ] Current score
+    - [ ] Initial score
+    - [ ] Min score
+    - [ ] Max score
+    - [ ] 1 day ago
+    - [ ] 3 days ago
+    - [ ] 7 days ago
+    - [ ] 30 days ago
+    - [ ] 90 days ago
+    - [ ] 180 days ago
+    - [ ] 270 days ago
+    - [ ] 365 days ago
+    - [ ] Fiscal quarter
+    - [ ] Colour cells based on +/- change (green vs. red)
+    - [ ] Colour cells based on whether or not the vulnerability is related to ransomware attacks in the wild (orange)
+    - [ ] Colour cells based on whether or not the vulnerability is present in a user-provided list of CVE IDs (i.e. to allow for serverless integration with vulnerability scanning tools)
+- [ ] Partition sparse matrix by date to show changes by date
+- [ ] Partition sparse matrix by CVE ID to show score history for each CVE ID while dropping unchanged scores
+- [ ] Partition dense matrix by CVE ID to show score history for each CVE ID without dropping unchanged scores 
+- [ ] Document how to enrich STIX 2 vulnerability objects with EPSS scores and percentiles
+- [ ] Document how to determine when a score is "trending"
+- [ ] Document how to determine when a vulnerability last experienced a score change of %x (e.g. +15%)
+- [ ] Document how to create line graphs showing changes to EPSS scores
+- [ ] Generate Quarto notebooks containing information about changes to EPSS scores using Polars, Altair, Seaborn, and Quarto
+- [ ] Enrich Quarto notebooks with data from NIST NVD
+- [ ] Enrich Quarto notebooks with data from CISA KEV
+- [ ] Partition EPSS scores based on whether or not a vulnerability is part of the CISA KEV catalog
+- [ ] Create an automated workflow to automatically enrich vulnerability definitions in STIX 2 format
