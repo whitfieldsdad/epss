@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "epss"
-version = "1.0.0"
+version = "2.0.0"
 description = "A client for downloading, quantizing, and analyzing EPSS scores"
 authors = ["Tyler Fisher <tylerfisher@tylerfisher.ca>"]
 license = "MIT"
