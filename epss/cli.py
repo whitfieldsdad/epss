@@ -1,7 +1,7 @@
 import sys
 from typing import Optional, Tuple
 from epss.constants import *
-from epss.epss import Client, Query
+from epss.client import PolarsClient as Client, Query
 from epss.json_encoder import JSONEncoder
 from epss import util
 import polars as pl
@@ -25,219 +25,133 @@ DEFAULT_CONSOLE_OUTPUT_FORMAT = TABLE
 
 
 @click.group()
-@click.option('--workdir', default=CACHE_DIR, show_default=True, help='Working directory')
 @click.option('--file-format', default=DEFAULT_FILE_FORMAT, type=click.Choice(FILE_FORMATS), show_default=True, help='File format')
+@click.option('--include-v1-scores/--exclude-v1-scores', is_flag=True, help='Include v1 scores')
+@click.option('--include-v2-scores/--exclude-v2-scores', is_flag=True, help='Include v2 scores')
+@click.option('--include-v3-scores/--exclude-v3-scores', default=True, help='Include v3 scores')
+@click.option('--include-all-scores/--exclude-all-scores', '-A', default=False, help='Include scores produced by all model versions')
+@click.option('--verify-tls/--no-verify-tls', default=True, help='Verify TLS certificates when downloading scores')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose logging')
 @click.pass_context
-def main(ctx: click.Context, workdir: str, file_format: str, verbose: bool):
+def main(
+    ctx: click.Context, 
+    file_format: str,
+    include_v1_scores: bool,
+    include_v2_scores: bool,
+    include_v3_scores: bool,
+    include_all_scores: bool,
+    verify_tls: bool,
+    verbose: bool):
     """
     Exploit Prediction Scoring System (EPSS)
     """
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(level=level, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 
+    if include_all_scores:
+        include_v1_scores = True
+        include_v2_scores = True
+        include_v3_scores = True
+
     ctx.obj = {
         'client': Client(
-            workdir=workdir,
             file_format=file_format,
+            include_v1_scores=include_v1_scores,
+            include_v2_scores=include_v2_scores,
+            include_v3_scores=include_v3_scores,
+            verify_tls=verify_tls,
         ),
     }
 
 
-@main.command('init')
-@click.option('--min-date', default=MIN_DATE, show_default=True, help='Minimum date')
-@click.option('--max-date', default=None, help='Maximum date')
+@main.command('scores')
+@click.option('--workdir', '-w', required=True, help='Work directory')
+@click.option('--min-date', '-a', show_default=True, help='Minimum date')
+@click.option('--date', '-d', help='Date')
+@click.option('--max-date', '-b', help='Maximum date')
+@click.option('--output-file', '-o', help='Output file')
+@click.option('--output-format', '-f', type=click.Choice(OUTPUT_FORMATS), help='Output format')
+@click.option('--download', is_flag=True, help="Don't write to an output file or the console, just download the data")
 @click.pass_context
-def init(ctx: click.Context, min_date: str, max_date: str):
-    """
-    Initialize local cache of EPSS scores.
-    """
-    client: Client = ctx.obj['client']
-    client.init(min_date=min_date, max_date=max_date)
-
-
-@main.command('clear')
-@click.pass_context
-def clear(ctx: click.Context):
-    """
-    Clear local cache of EPSS scores.
-    """
-    client: Client = ctx.obj['client']
-    client.clear()
-
-
-@main.command('history')
-@click.option('--cve-id', '-c', 'cve_ids', multiple=True, help='CVE ID')
-@click.option('--cve-id-file', '-i', 'cve_id_files', multiple=True, default=None, help='CVE IDs file (one per line)')
-@click.option('--min-date', '-a', default=MIN_DATE, show_default=True, help='Minimum date')
-@click.option('--max-date', '-b', default=None, help='Maximum date')
-@click.option('--date', '-d', default=None, help='Date')
-@click.option('--days-ago', '-n', type=int, default=None, help='Number of days ago')
-@click.option('--sql-query', '-s', default=None, help='SQL query')
-@click.option('--sql-table-name', '-t', default=DEFAULT_TABLE_NAME, show_default=True, help='SQL table name')
-@click.option('--output-file', '-o', default=None, help='Output file/directory')
-@click.option('--output-format', '-f', default=None, type=click.Choice(OUTPUT_FORMATS), help='Output file format')
-@click.pass_context
-def get_history_cli(
+def get_scores_cli(
     ctx: click.Context, 
-    cve_ids: Optional[Iterable[str]], 
-    cve_id_files: Optional[str],
+    workdir: str,
     min_date: Optional[str],
-    max_date: Optional[str],
     date: Optional[str],
-    days_ago: Optional[int],
-    sql_query: Optional[str],
-    sql_table_name: Optional[str],
-    output_file: Optional[str],
-    output_format: Optional[str]):
-    """
-    Get a diff of scores on two dates.
-    """
-    client: Client = ctx.obj['client']
-
-    min_date, max_date = get_date_range(
-        client=client,
-        min_date=min_date,
-        max_date=max_date,
-        date=date,
-        days_ago=days_ago,
-    )
-
-    query = None
-    if cve_ids or cve_id_files:
-        query = Query(cve_ids=cve_ids, cve_id_files=cve_id_files)
-
-    df = client.get_score_history_dataframe(
-        query=query, 
-        min_date=min_date,
-        max_date=max_date,
-    )
-    df = df.sort(['date', 'cve'])
-
-    if sql_query:
-        sql_table_name = sql_table_name or DEFAULT_TABLE_NAME
-        df = util.query_dataframes_with_sql({sql_table_name: df}, sql_query=sql_query)
-
-    write_output(df, output_file=output_file, output_format=output_format)
-
-
-@main.command('diff')
-@click.option('--cve-id', '-c', 'cve_ids', multiple=True, help='CVE ID')
-@click.option('--cve-id-file', '-i', 'cve_id_files', multiple=True, default=None, help='CVE IDs file (one per line)')
-@click.option('--min-date', '-a', default=MIN_DATE, show_default=True, help='Minimum date')
-@click.option('--max-date', '-b', default=None, help='Maximum date')
-@click.option('--date', '-d', default=None, help='Date')
-@click.option('--days-ago', '-n', type=int, default=None, help='Number of days ago')
-@click.option('--sql-query', '-s', default=None, help='SQL query')
-@click.option('--sql-table-name', '-t', default=DEFAULT_TABLE_NAME, show_default=True, help='SQL table name')
-@click.option('--output-file', '-o', default=None, help='Output file/directory')
-@click.option('--output-format', '-f', default=None, type=click.Choice(OUTPUT_FORMATS), help='Output file format')
-@click.option('--diff/--rolling', default=True, help="Whether to diff (a, b) or to calculate a rolling diff (a, a + 1, a + 2, ... a + n)")
-@click.pass_context
-def get_diff_cli(
-    ctx: click.Context, 
-    cve_ids: Optional[Iterable[str]], 
-    cve_id_files: Optional[str],
-    min_date: Optional[str],
     max_date: Optional[str],
-    date: Optional[str],
-    days_ago: Optional[int],
-    sql_query: Optional[str],
-    sql_table_name: Optional[str],
     output_file: Optional[str],
     output_format: Optional[str],
-    diff: bool):
+    download: bool):
     """
-    Get a diff of scores on two dates.
+    Get scores
+    """
+    if date:
+        min_date = date
+        max_date = date
+
+    client: Client = ctx.obj['client']
+    if download:
+        client.download_scores(
+            workdir=workdir,
+            min_date=min_date,
+            max_date=max_date,
+        )
+    else:
+        df = client.get_scores(
+            workdir=workdir,
+            min_date=min_date,
+            max_date=max_date,
+        )
+        write_output(df, output_file, output_format)
+
+
+@main.command('urls')
+@click.option('--min-date', '-a', show_default=True, help='Minimum date')
+@click.option('--max-date', '-b', help='Maximum date')
+@click.option('--date', '-d', help='Date')
+@click.pass_context
+def get_urls_cli(
+    ctx: click.Context, 
+    min_date: Optional[str],
+    max_date: Optional[str],
+    date: Optional[str]):
+    """
+    Get URLs
     """
     client: Client = ctx.obj['client']
 
-    min_date, max_date = get_date_range(
-        client=client,
+    if date:
+        min_date = date
+        max_date = date
+
+    urls = client.iter_urls(
         min_date=min_date,
         max_date=max_date,
-        date=date,
-        days_ago=days_ago,
     )
-
-    query = None
-    if cve_ids or cve_id_files:
-        query = Query(cve_ids=cve_ids, cve_id_files=cve_id_files)
-
-    if diff:
-        df = client.get_score_diff_dataframe(
-            first_date=min_date,
-            second_date=max_date,
-            query=query,
-        )
-    else:
-        df = client.get_historical_diff_dataframe(
-            min_date=min_date,
-            max_date=max_date,
-            query=query,
-        )
-
-    df = df.sort(['date', 'cve'])
-
-    if sql_query:
-        sql_table_name = sql_table_name or DEFAULT_TABLE_NAME
-        df = util.query_dataframes_with_sql({sql_table_name: df}, sql_query=sql_query)
-
-    write_output(df, output_file=output_file, output_format=output_format)
+    for url in urls:
+        print(url)
 
 
 @main.command('date-range')
-@click.option('--min-date', '-a', default=MIN_DATE, show_default=True, help='Minimum date')
-@click.option('--max-date', '-b', default=None, help='Maximum date')
-@click.option('--date', '-d', default=None, help='Date')
-@click.option('--days-ago', '-n', type=int, default=None, help='Number of days ago')
+@click.option('--min-date', '-a', help='Minimum date')
+@click.option('--max-date', '-b', help='Maximum date')
 @click.pass_context
 def get_date_range_cli(
     ctx: click.Context, 
     min_date: Optional[str],
-    max_date: Optional[str],
-    date: Optional[str],
-    days_ago: Optional[int]):
+    max_date: Optional[str]):
     """
     Preview date ranges
     """
     client: Client = ctx.obj['client']
-
-    min_date, max_date = get_date_range(
-        client=client,
+    min_date, max_date = client.get_date_range(
         min_date=min_date,
         max_date=max_date,
-        date=date,
-        days_ago=days_ago,
     )
-
     print(json.dumps({
-        'min_date': min_date.isoformat() if min_date else None,
-        'max_date': max_date.isoformat() if max_date else None,
+        'min_date': min_date.isoformat(),
+        'max_date': max_date.isoformat(),
     }, cls=JSONEncoder))
-
-
-def get_date_range(
-        client: Client,
-        min_date: Optional[str], 
-        max_date: Optional[str], 
-        date: Optional[str],
-        days_ago: Optional[int]) -> Tuple[datetime.date, datetime.date]:
-
-    min_date = util.parse_date(min_date) if min_date else None
-    max_date = util.parse_date(max_date) if max_date else None
-
-    if min_date == max_date:
-        raise ValueError("Minimum and maximum dates cannot be the same")
-
-    if date:
-        max_date = util.parse_date(date)
-        min_date = max_date - datetime.timedelta(days=1)
-    elif days_ago is not None:
-        max_date = client.max_date
-        days_ago = max(days_ago, 1)
-        min_date = max_date - datetime.timedelta(days=days_ago)
-    return min_date or client.min_date, max_date or client.max_date
 
 
 def write_output(df: pl.DataFrame, output_file: Optional[str], output_format: Optional[str]):
