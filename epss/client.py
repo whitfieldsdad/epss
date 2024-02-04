@@ -35,9 +35,10 @@ class ClientInterface:
             workdir: str,
             min_date: Optional[TIME] = None, 
             max_date: Optional[TIME] = None,
-            query: Optional[Query] = None) -> Any:
+            query: Optional[Query] = None,
+            drop_unchanged_scores: bool = True) -> Any:
         """
-        Returns a dataframe containing EPSS scores published between the specified dates including scores that have not changed since the last calculation.        
+        Returns a dataframe containing EPSS scores published between the specified dates.
         
         The dataframe will be sorted by date and CVE ID in descending order.
         """
@@ -50,31 +51,6 @@ class ClientInterface:
             query: Optional[Query] = None) -> Any:
         """
         Returns a dataframe containing EPSS scores published on the specified date.
-
-        The dataframe will be sorted by CVE ID in descending order.
-        """
-        raise NotImplementedError()
-    
-    def get_score_changelog(
-            self,
-            workdir: str,
-            min_date: Optional[TIME] = None, 
-            max_date: Optional[TIME] = None,
-            query: Optional[Query] = None) -> Any:
-        """
-        Returns a dataframe containing the changes to EPSS scores published between the specified dates.
-
-        The dataframe will be sorted by date and CVE ID in descending order.
-        """
-        raise NotImplementedError()
-    
-    def get_score_changelog_by_date(
-            self,
-            workdir: str, 
-            date: Optional[TIME] = None,
-            query: Optional[Query] = None) -> Any:
-        """
-        Returns a dataframe containing the changes to EPSS scores published on the specified date.
 
         The dataframe will be sorted by CVE ID in descending order.
         """
@@ -229,27 +205,31 @@ class PolarsClient(BaseClient):
             workdir: str,
             min_date: Optional[TIME] = None, 
             max_date: Optional[TIME] = None,
-            query: Optional[Query] = None) -> pl.DataFrame:
+            query: Optional[Query] = None,
+            drop_unchanged_scores: bool = True) -> pl.DataFrame:
         
         min_date, max_date = self.get_date_range(min_date, max_date)
         logger.info('Reading scores for %s - %s', min_date.isoformat(), max_date.isoformat())
 
-        self.download_scores(
-            workdir=workdir, 
-            min_date=min_date, 
-            max_date=max_date,
-        )
-        if min_date != max_date:
-            f = functools.partial(
+        if min_date == max_date:
+            df = self.get_scores_by_date(workdir=workdir, date=min_date, query=query)
+        else:
+            resolver = functools.partial(
                 self.get_scores_by_date,
                 workdir=workdir,
                 query=query,
             )
+            dates = tuple(self.iter_dates(min_date, max_date))
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                dfs = executor.map(lambda date: f(date=date), self.iter_dates(min_date, max_date))
+                dfs = executor.map(lambda d: resolver(date=d), dates)
+
+                # If `drop_unchanged_scores` is True, only include scores that have changed since the last calculation.
+                if drop_unchanged_scores:
+                    first = next(dfs)
+                    changes = executor.map(lambda e: get_changed_scores(*e), util.iter_pairwise(dfs))
+                    dfs = itertools.chain([first], changes)
+
                 df = pl.concat(dfs)
-        else:
-            df = self.get_scores_by_date(workdir=workdir, date=min_date, query=query)
 
         df = df.sort(by=['date', 'cve'], descending=True)
         return df
@@ -280,44 +260,6 @@ class PolarsClient(BaseClient):
 
         df = df.sort(by=['cve'], descending=True)
         return df
-    
-    def get_score_changelog(
-            self,
-            workdir: str, 
-            min_date: Optional[TIME] = None, 
-            max_date: Optional[TIME] = None,
-            query: Optional[Query] = None) -> pl.DataFrame:
-        
-        dates = self.iter_dates(min_date, max_date)
-        f = functools.partial(
-            self.get_scores_by_date,
-            workdir=workdir,
-            query=query,
-        )
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            dfs = executor.map(lambda d: f(date=d), dates)
-            first = next(dfs)
-            changes = executor.map(lambda e: get_changed_scores(*e), util.iter_pairwise(dfs))
-            dfs = itertools.chain([first], changes)
-            df = pl.concat(dfs)
-            df = df.sort(by=['date', 'cve'], descending=True)
-            return df
-    
-    def get_score_changelog_by_date(
-            self,
-            workdir: str, 
-            date: Optional[TIME] = None,
-            query: Optional[Query] = None) -> pl.DataFrame:
-        
-        date = util.parse_date(date)
-        previous_date = date - datetime.timedelta(days=1)
-        if previous_date < self.min_date:
-            raise ValueError(f'No scores available for {previous_date.isoformat()}')
-
-        a = self.get_scores_by_date(workdir=workdir, date=date, query=query)
-        b = self.get_scores_by_date(workdir=workdir, date=previous_date, query=query)
-        d = get_changed_scores(a, b)
-        return d
     
     def filter_scores(self, df: pl.DataFrame, query: Query) -> pl.DataFrame:
         min_date, max_date = self.get_date_range()
