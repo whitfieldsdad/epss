@@ -5,6 +5,7 @@ import io
 import itertools
 import os
 import re
+import sys
 from typing import Any, Iterable, Iterator, List, Optional, Tuple, Union
 
 import requests
@@ -104,7 +105,7 @@ class BaseClient(ClientInterface):
         """
         min_allowed_date = self.get_min_date()
         max_allowed_date = self.get_max_date()
-        logger.info('Detected allowed date range as: %s - %s', min_allowed_date, max_allowed_date)
+        logger.debug('Detected allowed date range as: %s - %s', min_allowed_date, max_allowed_date)
         
         min_date = util.parse_date(min_date) if min_date else min_allowed_date
         max_date = util.parse_date(max_date) if max_date else max_allowed_date
@@ -152,14 +153,14 @@ class BaseClient(ClientInterface):
                 total = len(futures)
                 min_date = min(futures.values())
                 max_date = max(futures.values())
-                logger.info('Downloading scores for %s - %s (%d dates)', min_date.isoformat(), max_date.isoformat(), total)
+                logger.debug('Downloading scores for %s - %s (%d dates)', min_date.isoformat(), max_date.isoformat(), total)
                 for future in concurrent.futures.as_completed(futures):
                     try:
                         future.result()
                     except requests.exceptions.HTTPError as e:
                         logger.warning('Failed to download scores for %s: %s', futures[future].isoformat(), e)
          
-            logger.info("All scores have been downloaded")
+            logger.debug("All scores have been downloaded")
 
     def download_scores_by_date(self, workdir: str, date: TIME):
         """
@@ -176,7 +177,7 @@ class BaseClient(ClientInterface):
             return
         
         url = get_download_url(date)
-        logger.info('Downloading scores for %s: %s -> %s', date.isoformat(), url, path)
+        logger.debug('Downloading scores for %s: %s -> %s', date.isoformat(), url, path)
 
         response = requests.get(url, verify=self.verify_tls, stream=True)
         response.raise_for_status()
@@ -200,6 +201,7 @@ class PolarsClient(BaseClient):
     """
     A client for working with EPSS scores using Polars DataFrames.
     """
+    # TODO
     def get_scores(
             self, 
             workdir: str,
@@ -209,30 +211,28 @@ class PolarsClient(BaseClient):
             drop_unchanged_scores: bool = True) -> pl.DataFrame:
         
         min_date, max_date = self.get_date_range(min_date, max_date)
-        logger.info('Reading scores for %s - %s', min_date.isoformat(), max_date.isoformat())
-
+        
         if min_date == max_date:
-            df = self.get_scores_by_date(workdir=workdir, date=min_date, query=query)
-        else:
-            resolver = functools.partial(
-                self.get_scores_by_date,
-                workdir=workdir,
-                query=query,
-            )
-            dates = tuple(self.iter_dates(min_date, max_date))
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                dfs = executor.map(lambda d: resolver(date=d), dates)
-
-                # If `drop_unchanged_scores` is True, only include scores that have changed since the last calculation.
-                if drop_unchanged_scores:
-                    first = next(dfs)
-                    changes = executor.map(lambda e: get_changed_scores(*e), util.iter_pairwise(dfs))
-                    dfs = itertools.chain([first], changes)
-
+            return self.get_scores_by_date(workdir=workdir, date=min_date, query=query)
+        
+        resolver = functools.partial(
+            self.get_scores_by_date,
+            workdir=workdir,
+            query=query,
+        )
+        dates = self.iter_dates(min_date, max_date)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            dfs = executor.map(lambda date: resolver(date=date), dates)
+            if drop_unchanged_scores is False:
                 df = pl.concat(dfs)
+            else:            
+                first = next(dfs)
+                changes = executor.map(lambda e: get_changed_scores(*e), util.iter_pairwise(dfs))
 
-        df = df.sort(by=['date', 'cve'], descending=True)
-        return df
+                df = pl.concat(itertools.chain([first], changes))
+            
+            df = df.sort(by=['date', 'cve'], descending=False)
+            return df
 
     def get_scores_by_date(
             self,
@@ -258,7 +258,7 @@ class PolarsClient(BaseClient):
         if 'cve' not in df.columns:
             raise ValueError(f'The dataframe for {date.isoformat()} does not contain a `cve` column (columns: {df.columns})')
 
-        df = df.sort(by=['cve'], descending=True)
+        df = df.sort(by=['cve'], descending=False)
         return df
     
     def filter_scores(self, df: pl.DataFrame, query: Query) -> pl.DataFrame:
@@ -381,7 +381,7 @@ def get_epss_v3_max_date(verify_tls: bool = True) -> datetime.date:
     Returns the latest publication date for EPSS v3 scores.
     """
     url = "https://epss.cyentia.com/epss_scores-current.csv.gz"
-    logger.info("Resolving latest publication date for EPSS scores")
+    logger.debug("Resolving latest publication date for EPSS scores")
 
     response = requests.head(url, verify=verify_tls)
     location = response.headers["Location"]
@@ -391,7 +391,7 @@ def get_epss_v3_max_date(verify_tls: bool = True) -> datetime.date:
     assert match is not None, f"No date found in {location}"
     date = datetime.date.fromisoformat(match.group(1))
 
-    logger.info(f'EPSS scores were last published on {date.isoformat()}')
+    logger.debug(f'EPSS scores were last published on {date.isoformat()}')
     return date
 
 
@@ -472,7 +472,7 @@ def read_dataframe(path: str, date: Optional[TIME] = None) -> pl.DataFrame:
     If the `date` column is missing and not explicitly provided, it must be possible to infer it from the filename. In such cases, the filename must contain a date in ISO-8601 format (YYYY-MM-DD) (e.g. epss_scores-2024-01-01.csv.gz).
     """
     df = util.read_dataframe(path)
-    logger.info('Read dataframe from %s (shape: %s, columns: %s)', path, df.shape, df.columns)
+    logger.debug('Read dataframe from %s (shape: %s, columns: %s)', path, df.shape, df.columns)
 
     if 'date' not in df.columns:
         if date:

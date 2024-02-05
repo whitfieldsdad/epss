@@ -5,7 +5,8 @@ This repository contains a lightning-fast [Python 3 module](epss) and a series o
 ## Features
 
 - Idempotently download daily sets of EPSS scores<sub>1</sub> in JSON, JSONL, CSV, or [Apache Parquet](https://parquet.apache.org/)<sub>2</sub> format
-- Explore EPSS scores as either sparse or dense matrices using [Polars](https://pola.rs/), a lightning-fast dataframe library written in Rust
+- Explore EPSS scores using [Polars](https://pola.rs/), a lightning-fast dataframe library written in Rust
+- Optionally drop unchanged scores
 - [Easily](examples/get-scores-as-polars-dataframe.py) [switch](examples/get-changed-scores-as-polars-dataframe.py) between different versions<sub>3</sub> of the [EPSS model](https://www.first.org/epss/model)
 
 <sub>1. By default, EPSS scores will be downloaded from 2023-03-07 onward, as this is the date when the outputs of EPSS v3 (v2023.03.01) were first published.</sub>
@@ -35,7 +36,7 @@ Additional resources:
 
 ## Usage
 
-### Developers
+### Building
 
 This package is not currently available on PyPi, but can be easily added to your project in one of two ways:
 
@@ -73,3 +74,30 @@ git+git+https://github.com/owner/repo@main
 ```
 
 <sub>1. Using Poetry for dependency management and adding this project as a dependency of your project without explicitly specifying a branch or tag is recommended.</sub>
+
+### Command line interface
+
+### Python
+
+#### Determine the minimum and maximum dates for which EPSS scores are available
+
+For example, if using EPSS v3 (v2023.03.01):
+
+```python
+from epss.client import PolarsClient
+
+client = PolarsClient(
+    include_v1_scores=False,
+    include_v2_scores=False,
+    include_v3_scores=True,
+)
+min_date, max_date = client.get_date_range()
+
+print(f'Min date: {min_date}')
+print(f'Max date: {max_date}')
+```
+
+```text
+Min date: 2021-04-14
+Max date: 2022-02-03
+```
