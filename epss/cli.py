@@ -1,9 +1,9 @@
-import sys
-from typing import Optional, Tuple
+from typing import Optional
 from epss.constants import *
-from epss.client import PolarsClient as Client, Query
+from epss.client import PolarsClient as Client
 from epss.json_encoder import JSONEncoder
 from epss import util
+import requests.packages
 import polars as pl
 import logging
 import click
@@ -48,6 +48,9 @@ def main(
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(level=level, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 
+    if verify_tls is False:
+        requests.packages.urllib3.disable_warnings() 
+
     if include_all_scores:
         include_v1_scores = True
         include_v2_scores = True
@@ -65,7 +68,7 @@ def main(
 
 
 @main.command('scores')
-@click.option('--workdir', '-w', required=True, help='Work directory')
+@click.option('--workdir', '-w', default=SCORES_BY_DATE_WORKDIR, show_default=True, help='Work directory')
 @click.option('--min-date', '-a', show_default=True, help='Minimum date')
 @click.option('--date', '-d', help='Date')
 @click.option('--max-date', '-b', help='Maximum date')

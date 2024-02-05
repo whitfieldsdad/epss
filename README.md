@@ -7,6 +7,7 @@ This repository contains a lightning-fast [Python 3 module](epss) and a series o
 - Idempotently download daily sets of EPSS scores<sub>1</sub> in JSON, JSONL, CSV, or [Apache Parquet](https://parquet.apache.org/)<sub>2</sub> format
 - Explore EPSS scores using [Polars](https://pola.rs/), a lightning-fast dataframe library written in Rust
 - Optionally drop unchanged scores
+- Optionally disable TLS certificate validation when downloading scores (i.e. to support environments where TLS MitM is being performed)
 - [Easily](examples/get-scores-as-polars-dataframe.py) [switch](examples/get-changed-scores-as-polars-dataframe.py) between different versions<sub>3</sub> of the [EPSS model](https://www.first.org/epss/model)
 
 <sub>1. By default, EPSS scores will be downloaded from 2023-03-07 onward, as this is the date when the outputs of EPSS v3 (v2023.03.01) were first published.</sub>

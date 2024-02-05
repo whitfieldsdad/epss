@@ -5,14 +5,12 @@ import io
 import itertools
 import os
 import re
-import sys
-from typing import Any, Iterable, Iterator, List, Optional, Tuple, Union
+from typing import Any, Iterable, Iterator, Optional, Tuple, Union
 
 import requests
 from epss import util
 from epss.constants import DEFAULT_FILE_FORMAT, TIME, V1_RELEASE_DATE, V2_RELEASE_DATE, V3_RELEASE_DATE
 import polars as pl
-import pandas as pd
 import concurrent.futures
 
 import logging
@@ -176,7 +174,7 @@ class BaseClient(ClientInterface):
             logger.debug("Scores for %s have already been downloaded: %s", date.isoformat(), path)
             return
         
-        url = get_download_url(date)
+        url = get_download_url(date, verify_tls=self.verify_tls)
         logger.debug('Downloading scores for %s: %s -> %s', date.isoformat(), url, path)
 
         response = requests.get(url, verify=self.verify_tls, stream=True)
@@ -201,7 +199,6 @@ class PolarsClient(BaseClient):
     """
     A client for working with EPSS scores using Polars DataFrames.
     """
-    # TODO
     def get_scores(
             self, 
             workdir: str,
@@ -290,7 +287,7 @@ class PolarsClient(BaseClient):
         
         min_date, max_date = self.get_date_range(min_date, max_date)
         for date in self.iter_dates(min_date, max_date):
-            yield get_download_url(date)
+            yield get_download_url(date, verify_tls=self.verify_tls)
 
 
 def get_file_path(workdir: str, file_format: str, key: Union[datetime.date, str]) -> str:
@@ -307,7 +304,7 @@ def get_file_path(workdir: str, file_format: str, key: Union[datetime.date, str]
     return os.path.join(workdir, f'{key}.{file_format}')
 
 
-def get_download_url(date: Optional[TIME] = None) -> str:
+def get_download_url(date: Optional[TIME] = None, verify_tls: bool = True) -> str:
     """
     Returns the URL for downloading EPSS scores for the specified date.
     
@@ -319,7 +316,7 @@ def get_download_url(date: Optional[TIME] = None) -> str:
 
     - https://epss.cyentia.com/epss_scores-2024-01-01.csv.gz
     """
-    date = util.parse_date(date) if date else get_max_date()
+    date = util.parse_date(date) if date else get_max_date(verify_tls=verify_tls)
     return f"https://epss.cyentia.com/epss_scores-{date.isoformat()}.csv.gz"
 
 
@@ -404,7 +401,7 @@ def get_max_date(
     Returns the latest publication date for EPSS scores under the specified model version constraints.
     """
     if include_v3_scores:
-        return get_epss_v3_max_date()
+        return get_epss_v3_max_date(verify_tls=verify_tls)
     elif include_v2_scores:
         return get_epss_v2_max_date()
     elif include_v1_scores:

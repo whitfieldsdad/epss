@@ -4,7 +4,8 @@ from typing import Iterable, Union
 import tempfile
 
 # Cache directory
-CACHE_DIR = os.path.join(tempfile.gettempdir(), '476c9b0d-79c6-4b7e-a31a-e18cec3d6444')
+WORKDIR = os.path.join(tempfile.gettempdir(), '476c9b0d-79c6-4b7e-a31a-e18cec3d6444', 'epss')
+SCORES_BY_DATE_WORKDIR = os.path.join(WORKDIR, 'scores-by-date')
 
 # Release dates
 V1_RELEASE_DATE = '2021-04-14'  
