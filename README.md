@@ -283,6 +283,6 @@ df = client.get_scores(
 with Workbook('epss.xlsx') as wb:
     df.write_excel(
         workbook=wb,
-        worksheet='Mandiant red team tools'
+        worksheet='FireEye red team tools'
     )
 ```

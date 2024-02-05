@@ -7,12 +7,14 @@ import os
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 
-WORKDIR = os.path.join(tempfile.gettempdir(), 'epss')
+#WORKDIR = os.path.join(tempfile.gettempdir(), 'epss')
+WORKDIR = '~/data/layers/raw/epss'
 
 client = PolarsClient(
     include_v1_scores=False,
     include_v2_scores=False,
     include_v3_scores=True,
+    verify_tls=False,
 )
 query = Query(
     cve_ids=[
@@ -43,5 +45,5 @@ df = client.get_scores(
 with Workbook('epss.xlsx') as wb:
     df.write_excel(
         workbook=wb,
-        worksheet='Mandiant red team tools'
+        worksheet='FireEye red team tools'
     )
