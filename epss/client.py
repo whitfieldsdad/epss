@@ -250,7 +250,7 @@ class PolarsClient(BaseClient):
         )
         if not os.path.exists(path):
             self.download_scores_by_date(workdir=workdir, date=date)
-            assert os.path.exists(path), "Scores unexpectedly not downloaded"
+            assert os.path.exists(path), f"Scores unexpectedly not downloaded for {date.isoformat()}"
 
         df = read_dataframe(path)
         if query:
@@ -259,6 +259,9 @@ class PolarsClient(BaseClient):
         # Check if the dataframe contains a `cve` column
         if 'cve' not in df.columns:
             raise ValueError(f'The dataframe for {date.isoformat()} does not contain a `cve` column (columns: {df.columns})')
+
+        # Use the following column order: date, cve, epss, percentile
+        df = df.select(['date', 'cve', 'epss', 'percentile'])
 
         df = df.sort(by=['cve'], descending=True)
         df = df.sort(by=['date'], descending=False)
@@ -305,6 +308,7 @@ def get_file_path(workdir: str, file_format: str, key: Union[datetime.date, str]
     - If partitioning by `date`: `/tmp/epss/2024-01-01.parquet`
     - If partitioning by `cve`: `/tmp/epss/CVE-2024-01-01.parquet`
     """
+    workdir = util.realpath(workdir)
     if isinstance(key, datetime.date):
         key = key.isoformat()
     return os.path.join(workdir, f'{key}.{file_format}')

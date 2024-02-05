@@ -12,7 +12,8 @@ pyarrow = "^14.0.2"
 requests = "^2.31.0"
 click = "^8.1.7"
 tqdm = "^4.66.1"
-polars = "^0.20.3"
+polars = {extras = ["sqlalchemy"], version = "^0.20.7"}
+xlsxwriter = "^3.1.9"
 
 [tool.poetry.scripts]
 epss = "epss.cli:main"

@@ -206,3 +206,83 @@ poetry run epss scores -a 2024-01-01 --download
 ```
 
 <sub>1. Unchanged scores will still be saved to disk regardless of the value of the `--drop-unchanged/--no-drop-unchanged` flags.</sub>
+
+### Python
+
+Additional examples are available in the [examples](examples) folder.
+
+#### Load unique EPSS scores into Polars
+
+To load EPSS scores into Polars:
+
+```python
+from epss.client import PolarsClient
+
+import polars as pl
+import tempfile
+import os
+
+cfg = pl.Config()
+cfg.set_tbl_rows(-1)    # Unlimited output length
+
+WORKDIR = os.path.join(tempfile.gettempdir(), 'epss')
+
+client = PolarsClient(
+    include_v1_scores=False,
+    include_v2_scores=False,
+    include_v3_scores=True,
+)
+df = client.get_scores(workdir=WORKDIR, drop_unchanged_scores=True)
+print(df)
+```
+
+#### Generating a spreadsheet of changed EPSS scores
+
+To generate a [spreadsheet](examples/data/epss.xlsx) containing the EPSS scores of all [CVEs](https://github.com/mandiant/red_team_tool_countermeasures/blob/master/CVEs_red_team_tools.md) known to be exploitable using [FireEye's leaked red team tools](https://www.mandiant.com/resources/blog/unauthorized-access-of-fireeye-red-team-tools):
+
+```python
+from xlsxwriter import Workbook
+from epss.client import PolarsClient, Query
+
+import tempfile
+import os
+
+WORKDIR = os.path.join(tempfile.gettempdir(), 'epss')
+
+client = PolarsClient(
+    include_v1_scores=False,
+    include_v2_scores=False,
+    include_v3_scores=True,
+)
+query = Query(
+    cve_ids=[
+        'CVE-2019-11510',
+        'CVE-2020-1472',
+        'CVE-2018-13379',
+        'CVE-2018-15961',
+        'CVE-2019-0604',
+        'CVE-2019-0708',
+        'CVE-2019-11580',
+        'CVE-2019-19781',
+        'CVE-2020-10189',
+        'CVE-2014-1812',
+        'CVE-2019-3398',
+        'CVE-2020-0688',
+        'CVE-2016-0167',
+        'CVE-2017-11774',
+        'CVE-2018-8581',
+        'CVE-2019-8394',
+    ]
+)
+df = client.get_scores(
+    workdir=WORKDIR,
+    query=query,
+    drop_unchanged_scores=True
+)
+
+with Workbook('epss.xlsx') as wb:
+    df.write_excel(
+        workbook=wb,
+        worksheet='Mandiant red team tools'
+    )
+```
