@@ -208,6 +208,10 @@ class PolarsClient(BaseClient):
             drop_unchanged_scores: bool = True) -> pl.DataFrame:
         
         min_date, max_date = self.get_date_range(min_date, max_date)
+
+        # This is necessary to avoid listing all scores at the beginning of the requested timeframe.
+        if drop_unchanged_scores:
+            min_date -= datetime.timedelta(days=-1)
         
         if min_date == max_date:
             return self.get_scores_by_date(workdir=workdir, date=min_date, query=query)
@@ -222,13 +226,14 @@ class PolarsClient(BaseClient):
             dfs = executor.map(lambda date: resolver(date=date), dates)
             if drop_unchanged_scores is False:
                 df = pl.concat(dfs)
-            else:            
-                first = next(dfs)
+            else:
+                first = get_changed_scores(next(dfs), next(dfs))
                 changes = executor.map(lambda e: get_changed_scores(*e), util.iter_pairwise(dfs))
 
                 df = pl.concat(itertools.chain([first], changes))
             
-            df = df.sort(by=['date', 'cve'], descending=False)
+            df = df.sort(by=['cve'], descending=True)
+            df = df.sort(by=['date'], descending=False)
             return df
 
     def get_scores_by_date(
@@ -255,7 +260,8 @@ class PolarsClient(BaseClient):
         if 'cve' not in df.columns:
             raise ValueError(f'The dataframe for {date.isoformat()} does not contain a `cve` column (columns: {df.columns})')
 
-        df = df.sort(by=['cve'], descending=False)
+        df = df.sort(by=['cve'], descending=True)
+        df = df.sort(by=['date'], descending=False)
         return df
     
     def filter_scores(self, df: pl.DataFrame, query: Query) -> pl.DataFrame:
@@ -459,6 +465,9 @@ def get_changed_scores(a: pl.DataFrame, b: pl.DataFrame) -> pl.DataFrame:
     )
     df = df.filter(pl.col('epss_change') != 0)
     df = df.drop('prev_epss', 'epss_change')
+
+    df = df.sort(by=['cve'], descending=True)
+    df = df.sort(by=['date'], descending=False)
     return df
 
 

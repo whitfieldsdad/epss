@@ -74,6 +74,7 @@ def main(
 @click.option('--max-date', '-b', help='Maximum date')
 @click.option('--output-file', '-o', help='Output file')
 @click.option('--output-format', '-f', type=click.Choice(OUTPUT_FORMATS), help='Output format')
+@click.option('--drop-unchanged/--no-drop-unchanged', 'drop_unchanged_scores', default=True, show_default=True, help='Drop unchanged scores')
 @click.option('--download', is_flag=True, help="Don't write to an output file or the console, just download the data")
 @click.pass_context
 def get_scores_cli(
@@ -84,6 +85,7 @@ def get_scores_cli(
     max_date: Optional[str],
     output_file: Optional[str],
     output_format: Optional[str],
+    drop_unchanged_scores: bool,
     download: bool):
     """
     Get scores
@@ -104,7 +106,11 @@ def get_scores_cli(
             workdir=workdir,
             min_date=min_date,
             max_date=max_date,
+            drop_unchanged_scores=drop_unchanged_scores,
         )
+        df = df.sort(by=['cve'], descending=True)
+        df = df.sort(by=['epss'], descending=True)
+        df = df.sort(by=['date'], descending=False)
         write_output(df, output_file, output_format)
 
 
