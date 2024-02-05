@@ -120,6 +120,77 @@ shape: (33_592, 4)
 ...
 ```
 
+The `--output-format` argument can be used to change the output format.
+
+For example, to list scores in CSV format:
+
+```bash
+poetry run epss scores -a 2024-01-01 --drop-unchanged --output-format=csv | head
+```
+
+```csv
+cve,epss,percentile,date
+CVE-2019-1653,0.97555,0.99998,2024-01-03
+CVE-2020-14750,0.97544,0.99995,2024-01-03
+CVE-2013-2423,0.97512,0.99983,2024-01-03
+CVE-2019-19781,0.97485,0.99967,2024-01-03
+CVE-2019-1652,0.9747,0.99959,2024-01-03
+CVE-2013-1559,0.9728,0.99833,2024-01-03
+CVE-2019-3398,0.9722,0.99798,2024-01-03
+CVE-2019-1458,0.97194,0.99782,2024-01-03
+CVE-2020-7209,0.9719,0.99778,2024-01-03
+...
+```
+
+To save the output to a CSV file, you could use shell redirection, or the `--output-file` flag:
+
+```bash
+poetry run epss scores -a 2024-01-01 --drop-unchanged --output-format=csv --output-file 2024-01-01.csv
+```
+
+```bash
+du -sh 2024-01-01.csv
+1.3M    2024-01-01.csv
+```
+
+Or, in JSONL format:
+
+```bash
+poetry run epss scores -a 2024-01-01 --drop-unchanged --output-format=jsonl | head | jq -c
+```
+
+```json
+{"cve":"CVE-2019-1653","epss":0.97555,"percentile":0.99998,"date":"2024-01-03"}
+{"cve":"CVE-2020-14750","epss":0.97544,"percentile":0.99995,"date":"2024-01-03"}
+{"cve":"CVE-2013-2423","epss":0.97512,"percentile":0.99983,"date":"2024-01-03"}
+{"cve":"CVE-2019-19781","epss":0.97485,"percentile":0.99967,"date":"2024-01-03"}
+{"cve":"CVE-2019-1652","epss":0.9747,"percentile":0.99959,"date":"2024-01-03"}
+{"cve":"CVE-2013-1559","epss":0.9728,"percentile":0.99833,"date":"2024-01-03"}
+{"cve":"CVE-2019-3398","epss":0.9722,"percentile":0.99798,"date":"2024-01-03"}
+{"cve":"CVE-2019-1458","epss":0.97194,"percentile":0.99782,"date":"2024-01-03"}
+{"cve":"CVE-2020-7209","epss":0.9719,"percentile":0.99778,"date":"2024-01-03"}
+{"cve":"CVE-2021-43798","epss":0.97105,"percentile":0.99734,"date":"2024-01-03"}
+```
+
+From here, it's easy to see when specific vulnerabilities experienced an increase or decrease in their perceived exploitability:
+
+```bash
+poetry run epss scores --drop-unchanged --output-format=jsonl | 
+grep "CVE-2016-0060" | jq -c
+```
+
+```json
+{"cve":"CVE-2016-0060","epss":0.07609,"percentile":0.931,"date":"2023-04-04"}
+{"cve":"CVE-2016-0060","epss":0.12376,"percentile":0.94566,"date":"2023-05-13"}
+{"cve":"CVE-2016-0060","epss":0.51531,"percentile":0.97065,"date":"2023-06-19"}
+{"cve":"CVE-2016-0060","epss":0.66813,"percentile":0.9746,"date":"2023-07-23"}
+{"cve":"CVE-2016-0060","epss":0.7155,"percentile":0.97673,"date":"2023-09-28"}
+{"cve":"CVE-2016-0060","epss":0.71177,"percentile":0.97697,"date":"2023-10-31"}
+{"cve":"CVE-2016-0060","epss":0.7436,"percentile":0.97832,"date":"2023-12-03"}
+{"cve":"CVE-2016-0060","epss":0.76991,"percentile":0.97928,"date":"2024-01-04"}
+{"cve":"CVE-2016-0060","epss":0.828,"percentile":0.98183,"date":"2024-02-05"}
+```
+
 <sub>1. When querying historical sets of EPSS scores, any scores that have not already been downloaded will be downloaded automatically to a configurable working directory<sub>3</sub>. You do not have to explicitly download EPSS scores before querying them.</sub>
 
 <sub>2. Unchanged scores are dropped by default - this behaviour can be toggled using the `--drop-unchanged/--no-drop-unchanged` flags.</sub>
@@ -128,5 +199,10 @@ shape: (33_592, 4)
 
 #### Download scores published between two dates
 
+To download scores published between two dates without writing to the console, simply add the `--download` flag<sub>1</sub>:
 
+```bash
+poetry run epss scores -a 2024-01-01 --download
+```
 
+<sub>1. Unchanged scores will still be saved to disk regardless of the value of the `--drop-unchanged/--no-drop-unchanged` flags.</sub>
