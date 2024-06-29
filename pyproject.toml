@@ -18,6 +18,7 @@ xlsxwriter = "^3.1.9"
 [tool.poetry.scripts]
 epss = "epss.cli:main"
 client = "epss.cli:main"
+tool = "epss.cli:main"
 
 [build-system]
 requires = ["poetry-core"]
