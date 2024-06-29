@@ -9,7 +9,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.10"
 pyarrow = "^14.0.2"
-requests = "^2.31.0"
+requests = "^2.32.2"
 click = "^8.1.7"
 tqdm = "^4.66.1"
 polars = {extras = ["sqlalchemy"], version = "^0.20.7"}
